@@ -132,7 +132,7 @@ func TestGenerateVideo(t *testing.T) {
 }
 
 func TestGenerateDevice(t *testing.T) {
-	device := generateDevice()
+	device := generateDevice(DefaultConfig)
 
 	if device == nil {
 		t.Fatal("Device should not be nil")
@@ -179,6 +179,6 @@ func BenchmarkGenerateBanner(b *testing.B) {
 
 func BenchmarkGenerateDevice(b *testing.B) {
 	for i := 0; i < b.N; i++ {
-		generateDevice()
+		generateDevice(DefaultConfig)
 	}
 }

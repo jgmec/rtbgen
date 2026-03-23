@@ -1,0 +1,51 @@
+[
+  {
+    "id": "1774309461000319271-65640",
+    "correlation_id": "abc-123",
+    "start_time": "2026-03-24T10:00:00Z",
+    "end_time": "2026-03-24T18:00:00Z",
+    "criteria_type": "bbox",
+    "bounding_box": {
+      "max_lat": 40.9,
+      "max_lon": -73.7,
+      "min_lat": 40.5,
+      "min_lon": -74.1
+    },
+    "count": 100,
+    "status": "pending",
+    "created_at": "2026-03-24T01:44:21.00032462+02:00"
+  },
+  {
+    "id": "1774309640673393481-26826",
+    "correlation_id": "abc-123",
+    "start_time": "2026-03-24T10:00:00Z",
+    "end_time": "2026-03-24T18:00:00Z",
+    "criteria_type": "ip",
+    "ip_address": "10.10.10.10",
+    "count": 100,
+    "status": "pending",
+    "created_at": "2026-03-24T01:47:20.673403626+02:00"
+  },
+  {
+    "id": "1774309680547109248-151",
+    "correlation_id": "abc-123",
+    "start_time": "2026-03-24T00:00:00Z",
+    "end_time": "2026-03-25T18:00:00Z",
+    "criteria_type": "ifa",
+    "ifa": "some_ifa",
+    "count": 100,
+    "status": "pending",
+    "created_at": "2026-03-24T01:48:00.547113856+02:00"
+  },
+  {
+    "id": "1774309801947853846-66744",
+    "correlation_id": "abc-123",
+    "start_time": "2026-03-23T00:00:00Z",
+    "end_time": "2026-03-25T18:00:00Z",
+    "criteria_type": "ifa",
+    "ifa": "some_ifa_2",
+    "count": 100,
+    "status": "pending",
+    "created_at": "2026-03-24T01:50:01.947858134+02:00"
+  }
+]

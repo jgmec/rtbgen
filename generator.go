@@ -14,6 +14,7 @@ type GeneratorConfig struct {
 	MinBidFloor    float64
 	MaxBidFloor    float64
 	TestMode       bool
+	BoundingBox    *BoundingBox // nil = use random city geo
 }
 
 // Default configuration
@@ -323,7 +324,7 @@ func generateApp() *App {
 }
 
 // Device generation
-func generateDevice() *Device {
+func generateDevice(config GeneratorConfig) *Device {
 	oses := []string{"iOS", "Android", "Windows", "MacOS"}
 	makes := []string{"Apple", "Samsung", "Google", "Huawei", "Xiaomi", "OnePlus", "LG", "Motorola"}
 	carriers := []string{"Verizon", "AT&T", "T-Mobile", "Sprint", "Vodafone", "Orange", "O2"}
@@ -339,9 +340,14 @@ func generateDevice() *Device {
 	widths := []int{320, 375, 414, 768, 1024, 1920}
 	heights := []int{568, 667, 812, 1024, 1366, 1080}
 
+	geo := generateGeo()
+	if config.BoundingBox != nil {
+		geo = generateGeoInBBox(config.BoundingBox)
+	}
+
 	device := &Device{
 		UA:             generateUA(os, make),
-		Geo:            generateGeo(),
+		Geo:            geo,
 		DNT:            randomInt(0, 1),
 		Lmt:            randomInt(0, 1),
 		IP:             fmt.Sprintf("%d.%d.%d.%d", randomInt(1, 255), randomInt(1, 255), randomInt(1, 255), randomInt(1, 255)),
@@ -485,7 +491,7 @@ func GenerateRandomBidRequestWithConfig(requestType string, impType string, conf
 		ID:     randomID(),
 		AT:     randomInt(1, 2), // 1=First Price Auction, 2=Second Price Auction
 		TMax:   randomInt(100, 500),
-		Device: generateDevice(),
+		Device: generateDevice(config),
 		User:   generateUser(),
 		Regs:   generateRegs(),
 		Test:   0,
@@ -503,11 +509,12 @@ func GenerateRandomBidRequestWithConfig(requestType string, impType string, conf
 	}
 
 	// Add either site or app
-	if requestType == "site" {
+	switch requestType {
+	case "site":
 		req.Site = generateSite()
-	} else if requestType == "app" {
+	case "app":
 		req.App = generateApp()
-	} else {
+	default:
 		// Random selection
 		if randomBool() {
 			req.Site = generateSite()
@@ -535,4 +542,49 @@ func GenerateBatch(count int, requestType string, impType string) []*BidRequest 
 		requests[i] = GenerateRandomBidRequest(requestType, impType)
 	}
 	return requests
+}
+
+// randomTimestamp returns a random time in [start, end).
+func randomTimestamp(start, end time.Time) time.Time {
+	delta := end.Sub(start)
+	if delta <= 0 {
+		return start
+	}
+	return start.Add(time.Duration(rand.Int63n(int64(delta))))
+}
+
+// generateGeoInBBox generates a Geo point uniformly within the bounding box.
+func generateGeoInBBox(bbox *BoundingBox) *Geo {
+	return &Geo{
+		Lat:  randomFloat(bbox.MinLat, bbox.MaxLat),
+		Lon:  randomFloat(bbox.MinLon, bbox.MaxLon),
+		Type: 1, // GPS/Location Services
+	}
+}
+
+// generateRequestForTask creates a BidRequest tailored to a task's criteria,
+// with a random timestamp in [windowStart, windowEnd).
+func generateRequestForTask(task *Task, windowStart, windowEnd time.Time) *BidRequest {
+	config := DefaultConfig
+	if task.CriteriaType == CriteriaBBox && task.BoundingBox != nil {
+		config.BoundingBox = task.BoundingBox
+	}
+
+	req := GenerateRandomBidRequestWithConfig("random", "banner", config)
+
+	switch task.CriteriaType {
+	case CriteriaIP:
+		req.Device.IP = task.IPAddress
+	case CriteriaIFA:
+		req.Device.IFA = task.IFA
+	}
+
+	ts := randomTimestamp(windowStart, windowEnd)
+	req.Ext = map[string]any{
+		"task_id":        task.ID,
+		"correlation_id": task.CorrelationID,
+		"timestamp":      ts.Unix(),
+	}
+
+	return req
 }
