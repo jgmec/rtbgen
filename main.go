@@ -4,8 +4,6 @@ import (
 	"encoding/json"
 	"flag"
 	"fmt"
-	"math/rand"
-	"time"
 )
 
 // Global flag for pretty printing
@@ -22,9 +20,6 @@ func main() {
 	compact := flag.Bool("compact", false, "Compact JSON output (no indentation)")
 
 	flag.Parse()
-
-	// Initialize random seed
-	rand.Seed(time.Now().UnixNano())
 
 	// Set pretty print mode (compact overrides pretty)
 	if *compact {
@@ -43,17 +38,12 @@ func main() {
 	config := DefaultConfig
 	config.TestMode = *testMode
 
-	// Generate single or multiple requests
-	if *count == 1 {
+	// Generate RTB requests based on flags
+	for i := 0; i < *count; i++ {
 		req := GenerateRandomBidRequestWithConfig(*requestType, *impType, config)
 		printJSON(req)
-	} else {
-		requests := make([]*BidRequest, *count)
-		for i := 0; i < *count; i++ {
-			requests[i] = GenerateRandomBidRequestWithConfig(*requestType, *impType, config)
-		}
-		printJSON(requests)
 	}
+
 }
 
 func showExamples() {

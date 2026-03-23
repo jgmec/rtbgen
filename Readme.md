@@ -9,7 +9,6 @@ rtb-generator/
 ├── main.go          # Main entry point with CLI
 ├── models.go        # OpenRTB 2.5 data structures
 ├── generator.go     # Random data generation logic
-├── server.go        # HTTP REST API server
 ├── main_test.go     # Unit tests
 ├── go.mod           # Go module file
 ├── README.md        # This file
@@ -102,41 +101,6 @@ go run .
 
 # Audio ad for site
 ./rtb-generator -type=site -imp=audio
-```
-
-### REST API Server
-
-Run the application as an HTTP server:
-
-```bash
-# Start the server (default port 8080)
-go run main.go models.go generator.go server.go
-
-# Or specify a port
-go run main.go models.go generator.go server.go -port=9000
-```
-
-#### API Endpoints
-
-**GET /generate** - Generate a single bid request
-```bash
-curl "http://localhost:8080/generate?type=site&imp=banner"
-```
-
-**GET /batch** - Generate multiple bid requests
-```bash
-curl "http://localhost:8080/batch?count=5&type=app&imp=video"
-```
-
-**GET /health** - Health check
-```bash
-curl "http://localhost:8080/health"
-```
-
-**GET /** - API documentation (HTML)
-```bash
-# Open in browser
-http://localhost:8080/
 ```
 
 ### Programmatic Usage

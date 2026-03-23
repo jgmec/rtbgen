@@ -76,7 +76,7 @@ type Video struct {
 	Protocol       int         `json:"protocol,omitempty"`
 	W              int         `json:"w,omitempty"`
 	H              int         `json:"h,omitempty"`
-	StartDelay     int         `json:"startdelay,omitempty"`
+	StartDelay     int         `json:"startdelay"`
 	Placement      int         `json:"placement,omitempty"`
 	Linearity      int         `json:"linearity,omitempty"`
 	Skip           int         `json:"skip,omitempty"`

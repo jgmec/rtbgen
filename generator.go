@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"math/rand"
 	"time"
@@ -144,19 +145,19 @@ func generateAudio() *Audio {
 
 // Native generation
 func generateNative() *Native {
-	nativeRequest := map[string]interface{}{
+	nativeRequest := map[string]any{
 		"ver": "1.2",
-		"assets": []map[string]interface{}{
+		"assets": []map[string]any{
 			{
 				"id":       1,
 				"required": 1,
-				"title": map[string]interface{}{
+				"title": map[string]any{
 					"len": 80,
 				},
 			},
 			{
 				"id": 2,
-				"img": map[string]interface{}{
+				"img": map[string]any{
 					"type": 3,
 					"w":    300,
 					"h":    250,
@@ -165,9 +166,11 @@ func generateNative() *Native {
 		},
 	}
 
+	jsonData, _ := json.Marshal(nativeRequest)
+
 	// Convert to JSON string (simplified for example)
 	return &Native{
-		Request: fmt.Sprintf("%v", nativeRequest),
+		Request: string(jsonData),
 		Ver:     "1.2",
 		API:     []int{3, 5},
 	}
@@ -337,7 +340,7 @@ func generateDevice() *Device {
 	heights := []int{568, 667, 812, 1024, 1366, 1080}
 
 	device := &Device{
-		UA:             fmt.Sprintf("Mozilla/5.0 (%s; Android %d) AppleWebKit/537.36", make, randomInt(9, 14)),
+		UA:             generateUA(os, make),
 		Geo:            generateGeo(),
 		DNT:            randomInt(0, 1),
 		Lmt:            randomInt(0, 1),
@@ -374,6 +377,21 @@ func generateDevice() *Device {
 	}
 
 	return device
+}
+
+func generateUA(os, make string) string {
+	switch os {
+	case "iOS":
+		return fmt.Sprintf("Mozilla/5.0 (iPhone; CPU iPhone OS %d_%d like Mac OS X) AppleWebKit/605.1.15", randomInt(14, 17), randomInt(0, 5))
+	case "Android":
+		return fmt.Sprintf("Mozilla/5.0 (Linux; Android %d; %s) AppleWebKit/537.36", randomInt(9, 14), make)
+	case "Windows":
+		return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"
+	case "MacOS":
+		return fmt.Sprintf("Mozilla/5.0 (Macintosh; Intel Mac OS X 10_%d_%d) AppleWebKit/537.36", randomInt(13, 15), randomInt(0, 7))
+	default:
+		return fmt.Sprintf("Mozilla/5.0 (%s) AppleWebKit/537.36", os)
+	}
 }
 
 // Geo generation
