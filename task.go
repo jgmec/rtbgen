@@ -149,6 +149,9 @@ func (s *TaskStore) load() error {
 	if err != nil {
 		return fmt.Errorf("read tasks file: %w", err)
 	}
+	if len(data) == 0 {
+		return nil
+	}
 	var tasks []*Task
 	if err := json.Unmarshal(data, &tasks); err != nil {
 		return fmt.Errorf("unmarshal tasks: %w", err)

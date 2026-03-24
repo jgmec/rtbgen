@@ -21,6 +21,7 @@ func main() {
 	port := flag.String("port", "8080", "HTTP server port (server mode only)")
 	tasksFile := flag.String("tasks-file", "tasks.json", "Path to task persistence file (server mode only)")
 	outDir := flag.String("out-dir", "output", "Directory for generated JSONL files (server mode only)")
+	schedulerInterval := flag.Duration("scheduler-interval", 5*time.Minute, "How often the scheduler generates requests for active tasks (server mode only)")
 
 	// CLI generation flags
 	requestType := flag.String("type", "random", "Request type: site, app, or random")
@@ -35,7 +36,7 @@ func main() {
 	flag.Parse()
 
 	if *serverMode {
-		runServer(*port, *tasksFile, *outDir)
+		runServer(*port, *tasksFile, *outDir, *schedulerInterval)
 		return
 	}
 
@@ -63,24 +64,22 @@ func main() {
 		config.BoundingBox = bb
 	}
 
-	now := time.Now()
-	windowStart := now.Add(-5 * time.Minute)
-
 	for i := 0; i < *count; i++ {
+		now := time.Now()
 		req := GenerateRandomBidRequestWithConfig(*requestType, *impType, config)
-		ts := randomTimestamp(windowStart, now)
-		req.Ext = map[string]any{"timestamp": ts.Unix()}
+		ts := randomTimestamp(now.Add(-*schedulerInterval), now)
+		req.Ext = map[string]any{"timestamp": ts.UnixMilli()}
 		printJSON(req)
 	}
 }
 
-func runServer(port, tasksFile, outDir string) {
+func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration) {
 	store, err := NewTaskStore(tasksFile)
 	if err != nil {
 		log.Fatalf("load task store: %v", err)
 	}
 
-	scheduler := NewScheduler(store, outDir)
+	scheduler := NewScheduler(store, outDir, schedulerInterval)
 	go scheduler.Start()
 
 	srv := NewServer(store)

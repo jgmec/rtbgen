@@ -583,7 +583,7 @@ func generateRequestForTask(task *Task, windowStart, windowEnd time.Time) *BidRe
 	req.Ext = map[string]any{
 		"task_id":        task.ID,
 		"correlation_id": task.CorrelationID,
-		"timestamp":      ts.Unix(),
+		"timestamp":      ts.UnixMilli(),
 	}
 
 	return req

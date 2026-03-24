@@ -10,27 +10,27 @@ import (
 	"time"
 )
 
-const schedulerInterval = 5 * time.Minute
-
 type Scheduler struct {
-	store  *TaskStore
-	outDir string
-	stop   chan struct{}
+	store    *TaskStore
+	outDir   string
+	interval time.Duration
+	stop     chan struct{}
 }
 
-func NewScheduler(store *TaskStore, outDir string) *Scheduler {
+func NewScheduler(store *TaskStore, outDir string, interval time.Duration) *Scheduler {
 	return &Scheduler{
-		store:  store,
-		outDir: outDir,
-		stop:   make(chan struct{}),
+		store:    store,
+		outDir:   outDir,
+		interval: interval,
+		stop:     make(chan struct{}),
 	}
 }
 
 // Start runs the scheduler loop. Call in a goroutine.
 func (sc *Scheduler) Start() {
-	ticker := time.NewTicker(schedulerInterval)
+	ticker := time.NewTicker(sc.interval)
 	defer ticker.Stop()
-	log.Printf("scheduler started: interval=%s out_dir=%s", schedulerInterval, sc.outDir)
+	log.Printf("scheduler started: interval=%s out_dir=%s", sc.interval, sc.outDir)
 	for {
 		select {
 		case t := <-ticker.C:
@@ -73,11 +73,11 @@ func (sc *Scheduler) generateForTask(task *Task, now time.Time) error {
 	}
 	defer f.Close()
 
-	windowStart := now.Add(-schedulerInterval)
 	w := bufio.NewWriter(f)
 
 	for i := 0; i < task.Count; i++ {
-		req := generateRequestForTask(task, windowStart, now)
+		t := time.Now()
+		req := generateRequestForTask(task, t.Add(-sc.interval), t)
 		line, err := json.Marshal(req)
 		if err != nil {
 			return fmt.Errorf("marshal request: %w", err)
