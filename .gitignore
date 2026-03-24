@@ -1,5 +1,9 @@
-rtb_generator
+rtb-generator
+
 
 output*
 
 *.jsonl
+
+tasks.json
+
