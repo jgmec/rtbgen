@@ -13,9 +13,19 @@ type CriteriaType string
 
 const (
 	TaskStatusPending   TaskStatus = "pending"
-	TaskStatusRunning   TaskStatus = "running"
+	TaskStatusActive    TaskStatus = "active"
 	TaskStatusCompleted TaskStatus = "completed"
 )
+
+func computeStatus(t *Task, now time.Time) TaskStatus {
+	if now.Before(t.StartTime) {
+		return TaskStatusPending
+	}
+	if now.After(t.EndTime) {
+		return TaskStatusCompleted
+	}
+	return TaskStatusActive
+}
 
 const (
 	CriteriaIP   CriteriaType = "ip"
@@ -73,15 +83,23 @@ func (s *TaskStore) Get(id string) (*Task, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
 	t, ok := s.tasks[id]
-	return t, ok
+	if !ok {
+		return nil, false
+	}
+	copy := *t
+	copy.Status = computeStatus(t, time.Now())
+	return &copy, true
 }
 
 func (s *TaskStore) List() []*Task {
 	s.mu.RLock()
 	defer s.mu.RUnlock()
+	now := time.Now()
 	tasks := make([]*Task, 0, len(s.tasks))
 	for _, t := range s.tasks {
-		tasks = append(tasks, t)
+		copy := *t
+		copy.Status = computeStatus(t, now)
+		tasks = append(tasks, &copy)
 	}
 	return tasks
 }

@@ -55,13 +55,13 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		IFA:           req.IFA,
 		BoundingBox:   req.BoundingBox,
 		Count:         req.Count,
-		Status:        TaskStatusPending,
 		CreatedAt:     time.Now(),
 	}
 	if err := s.store.Add(task); err != nil {
 		http.Error(w, fmt.Sprintf("failed to save task: %v", err), http.StatusInternalServerError)
 		return
 	}
+	task.Status = computeStatus(task, time.Now())
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusCreated)
 	json.NewEncoder(w).Encode(task)
