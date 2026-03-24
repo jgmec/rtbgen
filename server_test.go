@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"testing"
 	"time"
 )
@@ -94,6 +95,48 @@ func TestCreateTask_ValidationErrors(t *testing.T) {
 				t.Errorf("got %d, want %d", w.Code, http.StatusBadRequest)
 			}
 		})
+	}
+}
+
+func TestCreateTask_ZeroTimes(t *testing.T) {
+	srv := newTestServer(t)
+	body, _ := json.Marshal(CreateTaskRequest{
+		CorrelationID: "c",
+		CriteriaType:  CriteriaIP,
+		IPAddress:     "1.2.3.4",
+		Count:         1,
+		// StartTime and EndTime intentionally zero
+	})
+	r := httptest.NewRequest(http.MethodPost, "/tasks", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusBadRequest {
+		t.Errorf("got %d, want %d", w.Code, http.StatusBadRequest)
+	}
+}
+
+func TestCreateTask_StoreError(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewTaskStore(dir + "/tasks.json")
+	// Make directory read-only so saves fail.
+	os.Chmod(dir, 0444)
+	defer os.Chmod(dir, 0755)
+
+	srv := NewServer(store)
+	now := time.Now()
+	body, _ := json.Marshal(CreateTaskRequest{
+		CorrelationID: "c",
+		StartTime:     now.Add(-time.Hour),
+		EndTime:       now.Add(time.Hour),
+		CriteriaType:  CriteriaIP,
+		IPAddress:     "1.2.3.4",
+		Count:         1,
+	})
+	r := httptest.NewRequest(http.MethodPost, "/tasks", bytes.NewReader(body))
+	w := httptest.NewRecorder()
+	srv.Handler().ServeHTTP(w, r)
+	if w.Code != http.StatusInternalServerError {
+		t.Errorf("got %d, want %d", w.Code, http.StatusInternalServerError)
 	}
 }
 

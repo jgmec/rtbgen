@@ -203,6 +203,93 @@ func TestParseBoundingBox(t *testing.T) {
 	}
 }
 
+func TestGenerateUA(t *testing.T) {
+	tests := []struct{ os, make string }{
+		{"iOS", "Apple"},
+		{"Android", "Samsung"},
+		{"Windows", ""},
+		{"MacOS", ""},
+		{"ChromeOS", ""},
+	}
+	for _, tt := range tests {
+		t.Run(tt.os, func(t *testing.T) {
+			ua := generateUA(tt.os, tt.make)
+			if ua == "" {
+				t.Error("UA should not be empty")
+			}
+		})
+	}
+}
+
+func TestGenerateImpression_Random(t *testing.T) {
+	gotBanner, gotVideo := false, false
+	for range 100 {
+		imp := generateImpression("random", DefaultConfig)
+		if imp.Banner != nil {
+			gotBanner = true
+		}
+		if imp.Video != nil {
+			gotVideo = true
+		}
+		if gotBanner && gotVideo {
+			break
+		}
+	}
+	if !gotBanner {
+		t.Error("expected at least one banner from random impression type")
+	}
+	if !gotVideo {
+		t.Error("expected at least one video from random impression type")
+	}
+}
+
+func TestScheduler_StartStop(t *testing.T) {
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 100*time.Millisecond)
+	done := make(chan struct{})
+	go func() {
+		sc.Start()
+		close(done)
+	}()
+	sc.Stop()
+	select {
+	case <-done:
+	case <-time.After(time.Second):
+		t.Error("scheduler did not stop within 1s")
+	}
+}
+
+func TestScheduler_RunNoActiveTasks(t *testing.T) {
+	outDir := t.TempDir()
+	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute)
+	sc.run(time.Now())
+	entries, _ := os.ReadDir(outDir)
+	if len(entries) != 0 {
+		t.Errorf("expected no output files, got %d", len(entries))
+	}
+}
+
+func TestScheduler_GenerateForTask_OutDirError(t *testing.T) {
+	// Use a file as the output dir so MkdirAll fails.
+	blockingFile := t.TempDir() + "/file"
+	os.WriteFile(blockingFile, []byte("x"), 0644)
+	sc := NewScheduler(newTestStore(t), blockingFile+"/subdir", 5*time.Minute)
+	err := sc.generateForTask(&Task{ID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
+	if err == nil {
+		t.Error("expected error when outDir cannot be created")
+	}
+}
+
+func TestScheduler_GenerateForTask_FileCreateError(t *testing.T) {
+	outDir := t.TempDir()
+	os.Chmod(outDir, 0444)
+	defer os.Chmod(outDir, 0755)
+	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute)
+	err := sc.generateForTask(&Task{ID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
+	if err == nil {
+		t.Error("expected error when output file cannot be created")
+	}
+}
+
 func TestScheduler_GenerateForTask(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()

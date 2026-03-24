@@ -155,6 +155,35 @@ func TestTaskStorePersistence(t *testing.T) {
 	}
 }
 
+func TestTaskStoreLoadCorruptFile(t *testing.T) {
+	path := t.TempDir() + "/corrupt.json"
+	os.WriteFile(path, []byte("not-valid-json"), 0644)
+	_, err := NewTaskStore(path)
+	if err == nil {
+		t.Error("expected error for corrupt JSON file")
+	}
+}
+
+func TestTaskStoreReadError(t *testing.T) {
+	// A directory path cannot be read as a file.
+	path := t.TempDir() + "/dir"
+	os.Mkdir(path, 0755)
+	_, err := NewTaskStore(path)
+	if err == nil {
+		t.Error("expected error when path is a directory")
+	}
+}
+
+func TestTaskStoreSaveError(t *testing.T) {
+	dir := t.TempDir()
+	store, _ := NewTaskStore(dir + "/tasks.json")
+	os.Chmod(dir, 0444)
+	defer os.Chmod(dir, 0755)
+	if err := store.Add(sampleTask()); err == nil {
+		t.Error("expected error when directory is read-only")
+	}
+}
+
 func TestTaskStoreLoadEmptyFile(t *testing.T) {
 	// Non-existent file should not error
 	path := t.TempDir() + "/new.json"
