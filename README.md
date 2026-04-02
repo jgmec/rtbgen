@@ -96,9 +96,15 @@ POST /tasks
   "start_time": "2026-03-24T10:00:00Z",
   "end_time":   "2026-03-24T18:00:00Z",
   "criteria_type": "bbox",
-  "bounding_box": {
-    "max_lat": 40.9, "max_lon": -73.7,
-    "min_lat": 40.5, "min_lon": -74.1
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [[
+      [-74.1, 40.5],
+      [-73.7, 40.5],
+      [-73.7, 40.9],
+      [-74.1, 40.9],
+      [-74.1, 40.5]
+    ]]
   },
   "count": 100
 }
@@ -106,13 +112,67 @@ POST /tasks
 
 `criteria_type` must be one of:
 
-| Value | Required field |
-|---|---|
-| `ip` | `ip_address` |
-| `ifa` | `ifa` |
-| `bbox` | `bounding_box` |
+| Value | Required field | Format |
+|---|---|---|
+| `ip` | `ip_address` | IPv4/IPv6 string |
+| `ifa` | `ifa` | UUID string |
+| `bbox` | `geometry` | GeoJSON `Polygon` — coordinates are `[longitude, latitude]` |
 
 Returns `201 Created` with the created task object.
+
+**Example: IP criteria**
+
+```bash
+curl -X POST http://localhost:8080/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "correlation_id": "campaign-ip-001",
+    "start_time": "2026-03-24T10:00:00Z",
+    "end_time":   "2026-03-24T18:00:00Z",
+    "criteria_type": "ip",
+    "ip_address": "203.0.113.42",
+    "count": 50
+  }'
+```
+
+**Example: IFA criteria**
+
+```bash
+curl -X POST http://localhost:8080/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "correlation_id": "campaign-ifa-001",
+    "start_time": "2026-03-24T10:00:00Z",
+    "end_time":   "2026-03-24T18:00:00Z",
+    "criteria_type": "ifa",
+    "ifa": "38400000-8cf0-11bd-b23e-10b96e40000d",
+    "count": 50
+  }'
+```
+
+**Example: GeoJSON bounding box criteria**
+
+```bash
+curl -X POST http://localhost:8080/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "correlation_id": "campaign-geo-001",
+    "start_time": "2026-03-24T10:00:00Z",
+    "end_time":   "2026-03-24T18:00:00Z",
+    "criteria_type": "bbox",
+    "geometry": {
+      "type": "Polygon",
+      "coordinates": [[
+        [-74.1, 40.5],
+        [-73.7, 40.5],
+        [-73.7, 40.9],
+        [-74.1, 40.9],
+        [-74.1, 40.5]
+      ]]
+    },
+    "count": 100
+  }'
+```
 
 #### List tasks
 

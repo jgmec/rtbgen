@@ -25,14 +25,14 @@ func (s *Server) Handler() http.Handler {
 }
 
 type CreateTaskRequest struct {
-	CorrelationID string       `json:"correlation_id"`
-	StartTime     time.Time    `json:"start_time"`
-	EndTime       time.Time    `json:"end_time"`
-	CriteriaType  CriteriaType `json:"criteria_type"`
-	IPAddress     string       `json:"ip_address,omitempty"`
-	IFA           string       `json:"ifa,omitempty"`
-	BoundingBox   *BoundingBox `json:"bounding_box,omitempty"`
-	Count         int          `json:"count"`
+	CorrelationID string           `json:"correlation_id"`
+	StartTime     time.Time        `json:"start_time"`
+	EndTime       time.Time        `json:"end_time"`
+	CriteriaType  CriteriaType     `json:"criteria_type"`
+	IPAddress     string           `json:"ip_address,omitempty"`
+	IFA           string           `json:"ifa,omitempty"`
+	Geometry      *GeoJSONGeometry `json:"geometry,omitempty"`
+	Count         int              `json:"count"`
 }
 
 func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
@@ -52,9 +52,9 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		EndTime:       req.EndTime,
 		CriteriaType:  req.CriteriaType,
 		IPAddress:     req.IPAddress,
-		IFA:           req.IFA,
-		BoundingBox:   req.BoundingBox,
-		Count:         req.Count,
+		IFA:      req.IFA,
+		Geometry: req.Geometry,
+		Count:    req.Count,
 		CreatedAt:     time.Now(),
 	}
 	if err := s.store.Add(task); err != nil {
@@ -90,8 +90,11 @@ func validateCreateTaskRequest(req CreateTaskRequest) error {
 			return fmt.Errorf("ifa required for criteria_type=ifa")
 		}
 	case CriteriaBBox:
-		if req.BoundingBox == nil {
-			return fmt.Errorf("bounding_box required for criteria_type=bbox")
+		if req.Geometry == nil {
+			return fmt.Errorf("geometry required for criteria_type=bbox")
+		}
+		if _, err := req.Geometry.bbox(); err != nil {
+			return fmt.Errorf("invalid geometry: %w", err)
 		}
 	default:
 		return fmt.Errorf("criteria_type must be one of: ip, ifa, bbox")

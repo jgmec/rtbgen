@@ -145,16 +145,15 @@ func TestGenerateRequestForTask_IFA(t *testing.T) {
 }
 
 func TestGenerateRequestForTask_BBox(t *testing.T) {
-	bbox := &BoundingBox{MaxLat: 51.0, MaxLon: 0.5, MinLat: 50.0, MinLon: -0.5}
 	task := &Task{
 		CriteriaType: CriteriaBBox,
-		BoundingBox:  bbox,
+		Geometry:     testPolygon(-0.5, 50.0, 0.5, 51.0),
 	}
 	now := time.Now()
 	for range 10 {
 		req := generateRequestForTask(task, now.Add(-5*time.Minute), now)
 		geo := req.Device.Geo
-		if geo.Lat < bbox.MinLat || geo.Lat > bbox.MaxLat {
+		if geo.Lat < 50.0 || geo.Lat > 51.0 {
 			t.Errorf("lat %f outside bbox", geo.Lat)
 		}
 	}

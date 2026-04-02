@@ -566,8 +566,10 @@ func generateGeoInBBox(bbox *BoundingBox) *Geo {
 // with a random timestamp in [windowStart, windowEnd).
 func generateRequestForTask(task *Task, windowStart, windowEnd time.Time) *BidRequest {
 	config := DefaultConfig
-	if task.CriteriaType == CriteriaBBox && task.BoundingBox != nil {
-		config.BoundingBox = task.BoundingBox
+	if task.CriteriaType == CriteriaBBox && task.Geometry != nil {
+		if bb, err := task.Geometry.bbox(); err == nil {
+			config.BoundingBox = bb
+		}
 	}
 
 	req := GenerateRandomBidRequestWithConfig("random", "banner", config)

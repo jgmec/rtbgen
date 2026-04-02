@@ -11,6 +11,21 @@ var (
 	futureTime = time.Now().Add(2 * time.Hour)
 )
 
+// testPolygon builds a rectangular GeoJSON Polygon from bbox corners.
+// Coordinates are [longitude, latitude] per the GeoJSON spec.
+func testPolygon(minLon, minLat, maxLon, maxLat float64) *GeoJSONGeometry {
+	return &GeoJSONGeometry{
+		Type: "Polygon",
+		Coordinates: [][][2]float64{{
+			{minLon, minLat},
+			{maxLon, minLat},
+			{maxLon, maxLat},
+			{minLon, maxLat},
+			{minLon, minLat}, // closed ring
+		}},
+	}
+}
+
 func TestComputeStatus(t *testing.T) {
 	now := time.Now()
 	tests := []struct {
@@ -152,6 +167,47 @@ func TestTaskStorePersistence(t *testing.T) {
 	}
 	if _, ok := store2.Get(task.ID); !ok {
 		t.Error("task not found after reload")
+	}
+}
+
+func TestGeoJSONGeometryBBox(t *testing.T) {
+	poly := testPolygon(-74.1, 40.5, -73.7, 40.9)
+	bb, err := poly.bbox()
+	if err != nil {
+		t.Fatalf("bbox: %v", err)
+	}
+	if bb.MinLon != -74.1 || bb.MaxLon != -73.7 {
+		t.Errorf("lon: got [%f, %f], want [-74.1, -73.7]", bb.MinLon, bb.MaxLon)
+	}
+	if bb.MinLat != 40.5 || bb.MaxLat != 40.9 {
+		t.Errorf("lat: got [%f, %f], want [40.5, 40.9]", bb.MinLat, bb.MaxLat)
+	}
+}
+
+func TestGeoJSONGeometryBBox_Errors(t *testing.T) {
+	tests := []struct {
+		name string
+		geom GeoJSONGeometry
+	}{
+		{
+			"unsupported type",
+			GeoJSONGeometry{Type: "Point", Coordinates: nil},
+		},
+		{
+			"empty coordinates",
+			GeoJSONGeometry{Type: "Polygon", Coordinates: [][][2]float64{}},
+		},
+		{
+			"empty ring",
+			GeoJSONGeometry{Type: "Polygon", Coordinates: [][][2]float64{{}}},
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := tt.geom.bbox(); err == nil {
+				t.Error("expected error, got nil")
+			}
+		})
 	}
 }
 

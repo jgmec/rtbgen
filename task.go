@@ -33,25 +33,62 @@ const (
 	CriteriaBBox CriteriaType = "bbox"
 )
 
+// BoundingBox is used internally by the generator. Not exposed in the API.
 type BoundingBox struct {
-	MaxLat float64 `json:"max_lat"`
-	MaxLon float64 `json:"max_lon"`
-	MinLat float64 `json:"min_lat"`
-	MinLon float64 `json:"min_lon"`
+	MaxLat float64
+	MaxLon float64
+	MinLat float64
+	MinLon float64
+}
+
+// GeoJSONGeometry is a GeoJSON geometry object (https://geojson.org).
+// Only the Polygon type is supported for bbox criteria.
+// Coordinates follow the GeoJSON spec: [longitude, latitude].
+type GeoJSONGeometry struct {
+	Type        string           `json:"type"`
+	Coordinates [][][2]float64   `json:"coordinates"`
+}
+
+// bbox extracts the axis-aligned bounding box from a GeoJSON Polygon.
+func (g *GeoJSONGeometry) bbox() (*BoundingBox, error) {
+	if g.Type != "Polygon" {
+		return nil, fmt.Errorf("unsupported geometry type %q, expected Polygon", g.Type)
+	}
+	if len(g.Coordinates) == 0 || len(g.Coordinates[0]) == 0 {
+		return nil, fmt.Errorf("polygon has no coordinates")
+	}
+	ring := g.Coordinates[0] // exterior ring; GeoJSON [lon, lat]
+	minLon, maxLon := ring[0][0], ring[0][0]
+	minLat, maxLat := ring[0][1], ring[0][1]
+	for _, pt := range ring[1:] {
+		if pt[0] < minLon {
+			minLon = pt[0]
+		}
+		if pt[0] > maxLon {
+			maxLon = pt[0]
+		}
+		if pt[1] < minLat {
+			minLat = pt[1]
+		}
+		if pt[1] > maxLat {
+			maxLat = pt[1]
+		}
+	}
+	return &BoundingBox{MaxLat: maxLat, MaxLon: maxLon, MinLat: minLat, MinLon: minLon}, nil
 }
 
 type Task struct {
-	ID            string       `json:"id"`
-	CorrelationID string       `json:"correlation_id"`
-	StartTime     time.Time    `json:"start_time"`
-	EndTime       time.Time    `json:"end_time"`
-	CriteriaType  CriteriaType `json:"criteria_type"`
-	IPAddress     string       `json:"ip_address,omitempty"`
-	IFA           string       `json:"ifa,omitempty"`
-	BoundingBox   *BoundingBox `json:"bounding_box,omitempty"`
-	Count         int          `json:"count"`
-	Status        TaskStatus   `json:"status"`
-	CreatedAt     time.Time    `json:"created_at"`
+	ID            string           `json:"id"`
+	CorrelationID string           `json:"correlation_id"`
+	StartTime     time.Time        `json:"start_time"`
+	EndTime       time.Time        `json:"end_time"`
+	CriteriaType  CriteriaType     `json:"criteria_type"`
+	IPAddress     string           `json:"ip_address,omitempty"`
+	IFA           string           `json:"ifa,omitempty"`
+	Geometry      *GeoJSONGeometry `json:"geometry,omitempty"`
+	Count         int              `json:"count"`
+	Status        TaskStatus       `json:"status"`
+	CreatedAt     time.Time        `json:"created_at"`
 }
 
 // TaskStore is a thread-safe, JSON-file-backed store for Tasks.

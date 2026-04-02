@@ -75,8 +75,13 @@ func TestCreateTask_ValidationErrors(t *testing.T) {
 			CreateTaskRequest{CorrelationID: "c", StartTime: now, EndTime: now.Add(time.Hour), CriteriaType: CriteriaIFA, Count: 1},
 		},
 		{
-			"bbox criteria missing bbox",
+			"bbox criteria missing geometry",
 			CreateTaskRequest{CorrelationID: "c", StartTime: now, EndTime: now.Add(time.Hour), CriteriaType: CriteriaBBox, Count: 1},
+		},
+		{
+			"bbox criteria unsupported geometry type",
+			CreateTaskRequest{CorrelationID: "c", StartTime: now, EndTime: now.Add(time.Hour), CriteriaType: CriteriaBBox, Count: 1,
+				Geometry: &GeoJSONGeometry{Type: "Point"}},
 		},
 		{
 			"invalid criteria type",
@@ -193,7 +198,7 @@ func TestGetTask(t *testing.T) {
 		StartTime:     now.Add(-time.Hour),
 		EndTime:       now.Add(time.Hour),
 		CriteriaType:  CriteriaBBox,
-		BoundingBox:   &BoundingBox{MaxLat: 51, MaxLon: 1, MinLat: 50, MinLon: 0},
+		Geometry: testPolygon(0, 50, 1, 51),
 		Count:         3,
 	})
 	rCreate := httptest.NewRequest(http.MethodPost, "/tasks", bytes.NewReader(body))
