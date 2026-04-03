@@ -18,15 +18,17 @@ type Scheduler struct {
 	outDir   string
 	interval time.Duration
 	mmdb     *geoip2.Reader
+	geocoder *ReverseGeocoder
 	stop     chan struct{}
 }
 
-func NewScheduler(store *TaskStore, outDir string, interval time.Duration, mmdb *geoip2.Reader) *Scheduler {
+func NewScheduler(store *TaskStore, outDir string, interval time.Duration, mmdb *geoip2.Reader, geocoder *ReverseGeocoder) *Scheduler {
 	return &Scheduler{
 		store:    store,
 		outDir:   outDir,
 		interval: interval,
 		mmdb:     mmdb,
+		geocoder: geocoder,
 		stop:     make(chan struct{}),
 	}
 }
@@ -91,7 +93,7 @@ func (sc *Scheduler) generateForTask(task *Task, now time.Time) error {
 			t := time.Now()
 			req := generateRequestForTask(task, t.Add(-sc.interval), t, nil, "")
 			if geo != nil {
-				req.Device.Geo = geo
+				req.Device.Geo = sc.geocoder.Enrich(geo)
 			}
 			line, err := json.Marshal(req)
 			if err != nil {
@@ -187,7 +189,7 @@ func (sc *Scheduler) generateForDeviceTask(task *Task, w *bufio.Writer, now time
 	}
 
 	for _, ifa := range slots {
-		geo := currentGeo[ifa]
+		geo := sc.geocoder.Enrich(currentGeo[ifa])
 		t := time.Now()
 		req := generateRequestForTask(task, t.Add(-sc.interval), t, nil, ifa)
 		req.Device.Geo = geo

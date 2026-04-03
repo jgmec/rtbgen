@@ -25,6 +25,7 @@ func main() {
 	outDir := flag.String("out-dir", "output", "Directory for generated JSONL files (server mode only)")
 	schedulerInterval := flag.Duration("scheduler-interval", 5*time.Minute, "How often the scheduler generates requests for active tasks (server mode only)")
 	mmdbPath := flag.String("mmdb", "", "Path to MaxMind GeoIP2 City MMDB file (optional)")
+	nominatimURL := flag.String("nominatim-url", "https://nominatim.openstreetmap.org", "Base URL for Nominatim reverse geocoding (optional)")
 
 	// CLI generation flags
 	requestType := flag.String("type", "random", "Request type: site, app, or random")
@@ -39,7 +40,7 @@ func main() {
 	flag.Parse()
 
 	if *serverMode {
-		runServer(*port, *tasksFile, *outDir, *schedulerInterval, *mmdbPath)
+		runServer(*port, *tasksFile, *outDir, *schedulerInterval, *mmdbPath, *nominatimURL)
 		return
 	}
 
@@ -76,7 +77,7 @@ func main() {
 	}
 }
 
-func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, mmdbPath string) {
+func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, mmdbPath, nominatimURL string) {
 	store, err := NewTaskStore(tasksFile)
 	if err != nil {
 		log.Fatalf("load task store: %v", err)
@@ -92,7 +93,13 @@ func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, 
 		log.Printf("MaxMind MMDB loaded: %s", mmdbPath)
 	}
 
-	scheduler := NewScheduler(store, outDir, schedulerInterval, mmdb)
+	var geocoder *ReverseGeocoder
+	if nominatimURL != "" {
+		geocoder = NewReverseGeocoder(nominatimURL)
+		log.Printf("reverse geocoding enabled: %s", nominatimURL)
+	}
+
+	scheduler := NewScheduler(store, outDir, schedulerInterval, mmdb, geocoder)
 	go scheduler.Start()
 
 	srv := NewServer(store, mmdb)

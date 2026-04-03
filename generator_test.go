@@ -237,7 +237,7 @@ func TestIFA_ConsistentBaseGeoAcrossSchedulerRuns(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
 	srv := NewServer(store, nil)
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil)
 
 	now := time.Now()
 	task := &Task{
@@ -418,7 +418,7 @@ func TestGenerateImpression_Random(t *testing.T) {
 }
 
 func TestScheduler_StartStop(t *testing.T) {
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 100*time.Millisecond, nil)
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 100*time.Millisecond, nil, nil)
 	done := make(chan struct{})
 	go func() {
 		sc.Start()
@@ -434,7 +434,7 @@ func TestScheduler_StartStop(t *testing.T) {
 
 func TestScheduler_RunNoActiveTasks(t *testing.T) {
 	outDir := t.TempDir()
-	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil)
+	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil)
 	sc.run(time.Now())
 	entries, _ := os.ReadDir(outDir)
 	if len(entries) != 0 {
@@ -446,7 +446,7 @@ func TestScheduler_GenerateForTask_OutDirError(t *testing.T) {
 	// Use a file as the output dir so MkdirAll fails.
 	blockingFile := t.TempDir() + "/file"
 	os.WriteFile(blockingFile, []byte("x"), 0644)
-	sc := NewScheduler(newTestStore(t), blockingFile+"/subdir", 5*time.Minute, nil)
+	sc := NewScheduler(newTestStore(t), blockingFile+"/subdir", 5*time.Minute, nil, nil)
 	err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
 	if err == nil {
 		t.Error("expected error when outDir cannot be created")
@@ -457,7 +457,7 @@ func TestScheduler_GenerateForTask_FileCreateError(t *testing.T) {
 	outDir := t.TempDir()
 	os.Chmod(outDir, 0444)
 	defer os.Chmod(outDir, 0755)
-	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil)
+	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil)
 	err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
 	if err == nil {
 		t.Error("expected error when output file cannot be created")
@@ -467,7 +467,7 @@ func TestScheduler_GenerateForTask_FileCreateError(t *testing.T) {
 func TestScheduler_GenerateForTask(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil)
 
 	now := time.Now()
 	task := &Task{
@@ -495,7 +495,7 @@ func TestScheduler_GenerateForTask(t *testing.T) {
 func TestScheduler_Run(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil)
 
 	now := time.Now()
 	active := &Task{
@@ -597,7 +597,7 @@ func TestIP_InitialGeoFromMMDB(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
 	srv := NewServer(store, db)
-	sc := NewScheduler(store, outDir, 5*time.Minute, db)
+	sc := NewScheduler(store, outDir, 5*time.Minute, db, nil)
 
 	// Look up expected coordinates directly from the MMDB.
 	record, err := db.City(net.ParseIP("8.8.8.8"))
@@ -650,7 +650,7 @@ func TestIP_ConsecutiveLocationsWithin2km(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
 	srv := NewServer(store, nil)
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil)
 
 	const count = 20
 	now := time.Now()

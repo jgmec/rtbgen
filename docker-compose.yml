@@ -12,5 +12,6 @@ services:
       - -out-dir=${OUT_DIR}
       - -scheduler-interval=${SCHEDULER_INTERVAL}
       - -mmdb=${MMDB_PATH}
+      - -nominatim-url=${NOMINATIM_URL}
       - -bbox=${BBOX_MAX_LAT},${BBOX_MAX_LON},${BBOX_MIN_LAT},${BBOX_MIN_LON}
     restart: unless-stopped
