@@ -583,7 +583,7 @@ func generateGeoInBBox(bbox *BoundingBox) *Geo {
 
 // generateRequestForTask creates a BidRequest tailored to a task's criteria,
 // with a random timestamp in [windowStart, windowEnd).
-func generateRequestForTask(task *Task, windowStart, windowEnd time.Time, baseGeo *Geo) *BidRequest {
+func generateRequestForTask(task *Task, windowStart, windowEnd time.Time, baseGeo *Geo, deviceIFA string) *BidRequest {
 	config := DefaultConfig
 	switch task.CriteriaType {
 	case CriteriaBBox:
@@ -601,6 +601,13 @@ func generateRequestForTask(task *Task, windowStart, windowEnd time.Time, baseGe
 	switch task.CriteriaType {
 	case CriteriaIP:
 		req.Device.IP = task.IPAddress
+		if deviceIFA != "" {
+			req.Device.IFA = deviceIFA
+		}
+	case CriteriaBBox:
+		if deviceIFA != "" {
+			req.Device.IFA = deviceIFA
+		}
 	case CriteriaIFA:
 		req.Device.IFA = task.IFA
 	}

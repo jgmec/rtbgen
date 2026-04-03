@@ -116,7 +116,7 @@ func TestGenerateRequestForTask_IP(t *testing.T) {
 		IPAddress:     "10.0.0.1",
 	}
 	now := time.Now()
-	req := generateRequestForTask(task, now.Add(-5*time.Minute), now, nil)
+	req := generateRequestForTask(task, now.Add(-5*time.Minute), now, nil, "")
 
 	if req.Device.IP != "10.0.0.1" {
 		t.Errorf("got IP %q, want %q", req.Device.IP, "10.0.0.1")
@@ -164,7 +164,7 @@ func TestGenerateRequestForTask_IFA_SameLocation(t *testing.T) {
 	const kmPerDegree = 111.0
 
 	for range 20 {
-		req := generateRequestForTask(task, now.Add(-5*time.Minute), now, baseGeo)
+		req := generateRequestForTask(task, now.Add(-5*time.Minute), now, baseGeo, "")
 		geo := req.Device.Geo
 		dLat := (geo.Lat - baseGeo.Lat) * kmPerDegree
 		dLon := (geo.Lon - baseGeo.Lon) * kmPerDegree * math.Cos(baseGeo.Lat*math.Pi/180)
@@ -207,7 +207,7 @@ func TestIFA_ConsecutiveLocationsWithin2km(t *testing.T) {
 
 	reqs := make([]*BidRequest, count)
 	for i := range count {
-		reqs[i] = generateRequestForTask(task, now.Add(-5*time.Minute), now, baseGeo)
+		reqs[i] = generateRequestForTask(task, now.Add(-5*time.Minute), now, baseGeo, "")
 	}
 
 	for i, req := range reqs {
@@ -273,33 +273,27 @@ func TestIFA_ConsistentBaseGeoAcrossSchedulerRuns(t *testing.T) {
 		t.Fatalf("expected 2 output files (one per run), got %d", len(entries))
 	}
 
-	// Collect all requests from both ticks and verify consecutive pairs are within 2 km.
-	// Tick 2 requests must also be within 1 km of the LastGeo anchor inherited from tick 1.
+	// Collect all requests from both ticks.
+	// The first request of tick 2 must start within 2 km of tick 1's last position.
+	// All consecutive pairs (within a tick and across ticks) must be within 2 km.
 	var allReqs []*BidRequest
-	for i, entry := range entries {
+	for _, entry := range entries {
 		data, _ := os.ReadFile(outDir + "/" + entry.Name())
 		for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
 			var req BidRequest
 			if err := json.Unmarshal(line, &req); err != nil {
 				t.Fatalf("unmarshal: %v", err)
 			}
-			// Tick 2 requests must be within 1 km of the anchor LastGeo carried from tick 1.
-			if i == 1 {
-				geo := req.Device.Geo
-				const radiusKm = 1.0
-				const kmPerDegree = 111.0
-				latDelta := radiusKm / kmPerDegree
-				lonDelta := radiusKm / (kmPerDegree * math.Cos(lastGeoTick1.Lat*math.Pi/180))
-				if geo.Lat < lastGeoTick1.Lat-latDelta || geo.Lat > lastGeoTick1.Lat+latDelta {
-					t.Errorf("tick 2: lat %.6f outside 1 km bbox of tick-1 anchor [%.6f, %.6f]",
-						geo.Lat, lastGeoTick1.Lat-latDelta, lastGeoTick1.Lat+latDelta)
-				}
-				if geo.Lon < lastGeoTick1.Lon-lonDelta || geo.Lon > lastGeoTick1.Lon+lonDelta {
-					t.Errorf("tick 2: lon %.6f outside 1 km bbox of tick-1 anchor [%.6f, %.6f]",
-						geo.Lon, lastGeoTick1.Lon-lonDelta, lastGeoTick1.Lon+lonDelta)
-				}
-			}
 			allReqs = append(allReqs, &req)
+		}
+	}
+
+	// First request of tick 2 must be within 2 km of tick 1's persisted LastGeo.
+	if len(allReqs) > 10 {
+		dist := geoDistanceKm(lastGeoTick1.Lat, lastGeoTick1.Lon,
+			allReqs[10].Device.Geo.Lat, allReqs[10].Device.Geo.Lon)
+		if dist > 2.0 {
+			t.Errorf("first request of tick 2 is %.3f km from tick-1 LastGeo, want <= 2 km", dist)
 		}
 	}
 
@@ -318,7 +312,7 @@ func TestGenerateRequestForTask_IFA(t *testing.T) {
 		IFA:          "ifa-abc-123",
 	}
 	now := time.Now()
-	req := generateRequestForTask(task, now.Add(-5*time.Minute), now, nil)
+	req := generateRequestForTask(task, now.Add(-5*time.Minute), now, nil, "")
 
 	if req.Device.IFA != "ifa-abc-123" {
 		t.Errorf("got IFA %q, want %q", req.Device.IFA, "ifa-abc-123")
@@ -332,7 +326,7 @@ func TestGenerateRequestForTask_BBox(t *testing.T) {
 	}
 	now := time.Now()
 	for range 10 {
-		req := generateRequestForTask(task, now.Add(-5*time.Minute), now, nil)
+		req := generateRequestForTask(task, now.Add(-5*time.Minute), now, nil, "")
 		geo := req.Device.Geo
 		if geo.Lat < 50.0 || geo.Lat > 51.0 {
 			t.Errorf("lat %f outside bbox", geo.Lat)
@@ -646,18 +640,21 @@ func TestIP_InitialGeoFromMMDB(t *testing.T) {
 	}
 }
 
-// TestIP_ConsecutiveLocationsWithin2km verifies that for an IP task:
-// - Tick 1 requests are within 1 km of BaseGeo.
-// - Tick 2 requests are within 1 km of LastGeo from tick 1.
-// - All consecutive pairs across both ticks are within 2 km.
+// TestIP_ConsecutiveLocationsWithin2km verifies that for an IP task with persistent devices:
+// - Total requests per tick == count.
+// - Each IFA appears at most count/10 times per tick.
+// - Consecutive appearances of the same IFA within a tick are within 1 km of each other.
+// - For IFAs that appear in both ticks, the last tick-1 position is within 1 km of the first tick-2 position.
+// - All tick-1 first-appearance positions are within 1 km of the IP anchor.
 func TestIP_ConsecutiveLocationsWithin2km(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
 	srv := NewServer(store, nil)
 	sc := NewScheduler(store, outDir, 5*time.Minute, nil)
 
-	const count = 50
+	const count = 20
 	now := time.Now()
+	anchor := srv.resolveInitialGeo(CriteriaIP, "8.8.8.8")
 	task := &Task{
 		CorrelationID: "ip-proximity",
 		StartTime:     now.Add(-time.Hour),
@@ -665,18 +662,11 @@ func TestIP_ConsecutiveLocationsWithin2km(t *testing.T) {
 		CriteriaType:  CriteriaIP,
 		IPAddress:     "8.8.8.8",
 		Count:         count,
-		LastGeo:       srv.resolveInitialGeo(CriteriaIP, "8.8.8.8"),
+		LastGeo:       anchor,
 	}
 	store.Add(task)
 
 	sc.run(now)
-
-	afterTick1, _ := store.Get(task.CorrelationID)
-	if afterTick1.LastGeo == nil {
-		t.Fatal("LastGeo should be persisted after first scheduler run")
-	}
-	lastGeoTick1 := afterTick1.LastGeo
-
 	sc.run(now.Add(5 * time.Minute))
 
 	entries, _ := os.ReadDir(outDir)
@@ -684,39 +674,79 @@ func TestIP_ConsecutiveLocationsWithin2km(t *testing.T) {
 		t.Fatalf("expected 2 output files, got %d", len(entries))
 	}
 
-	var allReqs []*BidRequest
-	for i, entry := range entries {
-		data, _ := os.ReadFile(outDir + "/" + entry.Name())
+	// readOrdered returns an ordered slice of (IFA, Geo) pairs from a JSONL file.
+	type ifaGeo struct {
+		ifa string
+		geo *Geo
+	}
+	readOrdered := func(filename string) []ifaGeo {
+		var result []ifaGeo
+		data, _ := os.ReadFile(filename)
 		for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
 			var req BidRequest
 			if err := json.Unmarshal(line, &req); err != nil {
 				t.Fatalf("unmarshal: %v", err)
 			}
-			// Tick 2 requests must be within 1 km of the anchor inherited from tick 1.
-			if i == 1 {
-				geo := req.Device.Geo
-				const radiusKm = 1.0
-				const kmPerDegree = 111.0
-				latDelta := radiusKm / kmPerDegree
-				lonDelta := radiusKm / (kmPerDegree * math.Cos(lastGeoTick1.Lat*math.Pi/180))
-				if geo.Lat < lastGeoTick1.Lat-latDelta || geo.Lat > lastGeoTick1.Lat+latDelta {
-					t.Errorf("tick 2: lat %.6f outside 1 km bbox of tick-1 anchor [%.6f, %.6f]",
-						geo.Lat, lastGeoTick1.Lat-latDelta, lastGeoTick1.Lat+latDelta)
-				}
-				if geo.Lon < lastGeoTick1.Lon-lonDelta || geo.Lon > lastGeoTick1.Lon+lonDelta {
-					t.Errorf("tick 2: lon %.6f outside 1 km bbox of tick-1 anchor [%.6f, %.6f]",
-						geo.Lon, lastGeoTick1.Lon-lonDelta, lastGeoTick1.Lon+lonDelta)
+			result = append(result, ifaGeo{req.Device.IFA, req.Device.Geo})
+		}
+		return result
+	}
+
+	tick1 := readOrdered(outDir + "/" + entries[0].Name())
+	tick2 := readOrdered(outDir + "/" + entries[1].Name())
+
+	maxPerDevice := count / 10
+	if maxPerDevice < 1 {
+		maxPerDevice = 1
+	}
+
+	checkTick := func(tickName string, records []ifaGeo) map[string][]ifaGeo {
+		if len(records) != count {
+			t.Errorf("%s: expected %d records, got %d", tickName, count, len(records))
+		}
+		byIFA := make(map[string][]ifaGeo)
+		for _, r := range records {
+			byIFA[r.ifa] = append(byIFA[r.ifa], r)
+		}
+		for ifa, appearances := range byIFA {
+			if len(appearances) > maxPerDevice {
+				t.Errorf("%s: IFA %s appears %d times, want <= %d", tickName, ifa, len(appearances), maxPerDevice)
+			}
+			// Consecutive appearances within tick must be within 1 km.
+			for i := 1; i < len(appearances); i++ {
+				d := geoDistanceKm(appearances[i-1].geo.Lat, appearances[i-1].geo.Lon,
+					appearances[i].geo.Lat, appearances[i].geo.Lon)
+				if d > 1.0 {
+					t.Errorf("%s: IFA %s consecutive appearances %d→%d distance %.3f km, want <= 1 km",
+						tickName, ifa, i-1, i, d)
 				}
 			}
-			allReqs = append(allReqs, &req)
+		}
+		return byIFA
+	}
+
+	byIFA1 := checkTick("tick1", tick1)
+	byIFA2 := checkTick("tick2", tick2)
+
+	// All tick-1 first appearances must be within 1 km of the anchor.
+	const radiusKm = 1.0
+	for ifa, appearances := range byIFA1 {
+		first := appearances[0].geo
+		if d := geoDistanceKm(first.Lat, first.Lon, anchor.Lat, anchor.Lon); d > radiusKm {
+			t.Errorf("tick1: IFA %s first appearance %.3f km from anchor, want <= 1 km", ifa, d)
 		}
 	}
 
-	for i := 1; i < len(allReqs); i++ {
-		prev := allReqs[i-1].Device.Geo
-		cur := allReqs[i].Device.Geo
-		if dist := geoDistanceKm(prev.Lat, prev.Lon, cur.Lat, cur.Lon); dist > 2.0 {
-			t.Errorf("requests %d and %d are %.3f km apart, want <= 2 km", i-1, i, dist)
+	// For IFAs appearing in both ticks: last tick-1 position → first tick-2 position must be within 1 km.
+	for ifa, app1 := range byIFA1 {
+		app2, ok := byIFA2[ifa]
+		if !ok {
+			continue // device may be idle in tick 2 — allowed
+		}
+		last1 := app1[len(app1)-1].geo
+		first2 := app2[0].geo
+		if d := geoDistanceKm(last1.Lat, last1.Lon, first2.Lat, first2.Lon); d > 1.0 {
+			t.Errorf("IFA %s: tick1-last→tick2-first distance %.3f km, want <= 1 km", ifa, d)
 		}
 	}
 }

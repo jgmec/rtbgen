@@ -239,15 +239,81 @@ Each request includes an `ext` object:
 
 `timestamp` is a Unix millisecond value randomized within `[now - scheduler-interval, now]`.
 
-### Geo anchor persistence
+### Location walking
 
-For `ip` and `ifa` tasks, `last_geo` is persisted in `tasks.json` after every scheduler tick. It holds the last generated location of that tick and becomes the starting anchor for the next tick.
+Every task type maintains a `last_geo` that is persisted in `tasks.json` and updated after each scheduler tick. This produces a continuous walking path across ticks and within each tick.
 
-On the first tick the initial anchor is resolved as follows:
-- **ip** — coordinates from the MaxMind MMDB lookup for the given IP address
-- **ifa** — a random city
+#### Initial location
 
-This produces a continuous walking path: each tick generates locations within 1 km of where the previous tick ended, and any two consecutive locations across ticks are always within 2 km of each other. `last_geo` survives server restarts.
+| Criteria | Initial `last_geo` |
+|---|---|
+| `ip` | Resolved from MaxMind MMDB at task creation time |
+| `ifa` | Random city, resolved at task creation time |
+| `bbox` | Random point within the polygon, set on the first scheduler tick |
+
+#### ip and bbox — per-device walking
+
+`ip` and `bbox` tasks maintain a pool of `count` persistent devices, each with a unique IFA and its own location. The device map (`devices`) is persisted in `tasks.json`.
+
+| Criteria | Device initialisation |
+|---|---|
+| `ip` | Devices spread within 1 km of the IP anchor (`last_geo`) on the first tick |
+| `bbox` | Devices placed at random points within the polygon's bounding box on the first tick |
+
+Each tick generates exactly `count` requests distributed across the device pool. A device may appear between 1 and `count/10` times per tick (randomised); slot assignments are shuffled so the same IFA does not appear consecutively. Within a tick, each consecutive appearance of the same device walks up to 1 km from its previous appearance. After the tick each device's final position is saved and becomes its starting point for the next tick.
+
+For `bbox` tasks, if a walk step would leave the polygon's bounding box, the device resets to a fresh random point within the box.
+
+#### ifa — single location walking
+
+An `ifa` task generates `count` requests per tick from a single walking location (the task's fixed IFA). Within a tick, each consecutive request moves up to 2 km from the previous one. After the tick the final position is saved as `last_geo` and becomes the starting point for the next tick.
+
+All location state survives server restarts.
+
+### Example tick output
+
+Each criteria type produces different patterns within a JSONL file. The examples below use `count=3` for brevity.
+
+#### ip task
+
+All requests share the task's IP. Devices (IFAs) are persistent across ticks and may appear more than once per tick. Geo walks ≤1 km between consecutive appearances of the same device.
+
+```jsonl
+{"id":"abc1","device":{"ip":"8.8.8.8","ifa":"3a1f2b4c-0001-0001-0001-000000000001","geo":{"lat":37.3861,"lon":-122.0839,"type":2}},"ext":{"correlation_id":"campaign-ip-001","task_id":"campaign-ip-001","timestamp":1742812341000}}
+{"id":"abc2","device":{"ip":"8.8.8.8","ifa":"7e9d1a2f-0002-0002-0002-000000000002","geo":{"lat":37.3901,"lon":-122.0812,"type":2}},"ext":{"correlation_id":"campaign-ip-001","task_id":"campaign-ip-001","timestamp":1742812342000}}
+{"id":"abc3","device":{"ip":"8.8.8.8","ifa":"3a1f2b4c-0001-0001-0001-000000000001","geo":{"lat":37.3865,"lon":-122.0831,"type":2}},"ext":{"correlation_id":"campaign-ip-001","task_id":"campaign-ip-001","timestamp":1742812343000}}
+```
+
+- `device.ip` is always the task IP address
+- `device.ifa` repeats across ticks (persistent pool); may repeat within a tick (up to `count/10` times)
+- `device.geo` walks ≤1 km between consecutive appearances of the same IFA
+
+#### bbox task
+
+Same per-device pool logic as `ip`. No IP field. Locations stay within the polygon's bounding box.
+
+```jsonl
+{"id":"def1","device":{"ifa":"c4d8e2a1-0003-0003-0003-000000000003","geo":{"lat":40.7214,"lon":-73.9872,"type":2}},"ext":{"correlation_id":"campaign-geo-001","task_id":"campaign-geo-001","timestamp":1742812341000}}
+{"id":"def2","device":{"ifa":"9b3f1c7d-0004-0004-0004-000000000004","geo":{"lat":40.7531,"lon":-74.0124,"type":2}},"ext":{"correlation_id":"campaign-geo-001","task_id":"campaign-geo-001","timestamp":1742812342000}}
+{"id":"def3","device":{"ifa":"c4d8e2a1-0003-0003-0003-000000000003","geo":{"lat":40.7221,"lon":-73.9908,"type":2}},"ext":{"correlation_id":"campaign-geo-001","task_id":"campaign-geo-001","timestamp":1742812343000}}
+```
+
+- No `device.ip`
+- `device.ifa` is a persistent device UUID shared across ticks
+- `device.geo` is always within the polygon's bounding box; resets to a fresh random point if a walk step would leave it
+
+#### ifa task
+
+All requests share the single fixed IFA from the task. Geo walks ≤2 km between consecutive requests within a tick.
+
+```jsonl
+{"id":"ghi1","device":{"ifa":"38400000-8cf0-11bd-b23e-10b96e40000d","geo":{"lat":51.5101,"lon":-0.1182,"type":2}},"ext":{"correlation_id":"campaign-ifa-001","task_id":"campaign-ifa-001","timestamp":1742812341000}}
+{"id":"ghi2","device":{"ifa":"38400000-8cf0-11bd-b23e-10b96e40000d","geo":{"lat":51.5213,"lon":-0.1021,"type":2}},"ext":{"correlation_id":"campaign-ifa-001","task_id":"campaign-ifa-001","timestamp":1742812342000}}
+{"id":"ghi3","device":{"ifa":"38400000-8cf0-11bd-b23e-10b96e40000d","geo":{"lat":51.5334,"lon":-0.0983,"type":2}},"ext":{"correlation_id":"campaign-ifa-001","task_id":"campaign-ifa-001","timestamp":1742812343000}}
+```
+
+- `device.ifa` is identical in every request (the value provided when creating the task)
+- `device.geo` drifts ≤2 km per step; the final position in a tick becomes the starting point for the next tick
 
 ## Docker
 

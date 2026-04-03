@@ -86,6 +86,7 @@ type Task struct {
 	IFA           string           `json:"ifa,omitempty"`
 	Geometry      *GeoJSONGeometry `json:"geometry,omitempty"`
 	LastGeo       *Geo             `json:"last_geo,omitempty"`
+	Devices       map[string]*Geo  `json:"devices,omitempty"`
 	Count         int              `json:"count"`
 	Status        TaskStatus       `json:"status"`
 	CreatedAt     time.Time        `json:"created_at"`
