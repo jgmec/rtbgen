@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -12,7 +13,7 @@ import (
 
 func newTestServer(t *testing.T) *Server {
 	t.Helper()
-	return NewServer(newTestStore(t))
+	return NewServer(newTestStore(t), nil)
 }
 
 func TestCreateTask(t *testing.T) {
@@ -40,8 +41,8 @@ func TestCreateTask(t *testing.T) {
 	if err := json.NewDecoder(w.Body).Decode(&task); err != nil {
 		t.Fatalf("decode response: %v", err)
 	}
-	if task.ID == "" {
-		t.Error("task ID should not be empty")
+	if task.CorrelationID == "" {
+		t.Error("task correlation_id should not be empty")
 	}
 	if task.Status != TaskStatusActive {
 		t.Errorf("status: got %q, want %q", task.Status, TaskStatusActive)
@@ -127,7 +128,7 @@ func TestCreateTask_StoreError(t *testing.T) {
 	os.Chmod(dir, 0444)
 	defer os.Chmod(dir, 0755)
 
-	srv := NewServer(store)
+	srv := NewServer(store, nil)
 	now := time.Now()
 	body, _ := json.Marshal(CreateTaskRequest{
 		CorrelationID: "c",
@@ -160,9 +161,9 @@ func TestListTasks(t *testing.T) {
 	now := time.Now()
 
 	// add two tasks via the handler
-	for range 2 {
+	for i := range 2 {
 		body, _ := json.Marshal(CreateTaskRequest{
-			CorrelationID: "corr",
+			CorrelationID: fmt.Sprintf("corr-%d", i),
 			StartTime:     now.Add(-time.Hour),
 			EndTime:       now.Add(time.Hour),
 			CriteriaType:  CriteriaIFA,
@@ -208,7 +209,7 @@ func TestGetTask(t *testing.T) {
 	var created Task
 	json.NewDecoder(wCreate.Body).Decode(&created)
 
-	r := httptest.NewRequest(http.MethodGet, "/tasks/"+created.ID, nil)
+	r := httptest.NewRequest(http.MethodGet, "/tasks/"+created.CorrelationID, nil)
 	w := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(w, r)
 
@@ -217,8 +218,8 @@ func TestGetTask(t *testing.T) {
 	}
 	var got Task
 	json.NewDecoder(w.Body).Decode(&got)
-	if got.ID != created.ID {
-		t.Errorf("got ID %q, want %q", got.ID, created.ID)
+	if got.CorrelationID != created.CorrelationID {
+		t.Errorf("got correlation_id %q, want %q", got.CorrelationID, created.CorrelationID)
 	}
 }
 
@@ -251,7 +252,7 @@ func TestDeleteTask(t *testing.T) {
 	json.NewDecoder(wCreate.Body).Decode(&created)
 
 	// Delete it
-	r := httptest.NewRequest(http.MethodDelete, "/tasks/"+created.ID, nil)
+	r := httptest.NewRequest(http.MethodDelete, "/tasks/"+created.CorrelationID, nil)
 	w := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(w, r)
 	if w.Code != http.StatusNoContent {
@@ -259,7 +260,7 @@ func TestDeleteTask(t *testing.T) {
 	}
 
 	// Confirm gone
-	r2 := httptest.NewRequest(http.MethodGet, "/tasks/"+created.ID, nil)
+	r2 := httptest.NewRequest(http.MethodGet, "/tasks/"+created.CorrelationID, nil)
 	w2 := httptest.NewRecorder()
 	srv.Handler().ServeHTTP(w2, r2)
 	if w2.Code != http.StatusNotFound {

@@ -10,6 +10,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"github.com/oschwald/geoip2-golang"
 )
 
 // Global flag for pretty printing
@@ -22,6 +24,7 @@ func main() {
 	tasksFile := flag.String("tasks-file", "tasks.json", "Path to task persistence file (server mode only)")
 	outDir := flag.String("out-dir", "output", "Directory for generated JSONL files (server mode only)")
 	schedulerInterval := flag.Duration("scheduler-interval", 5*time.Minute, "How often the scheduler generates requests for active tasks (server mode only)")
+	mmdbPath := flag.String("mmdb", "", "Path to MaxMind GeoIP2 City MMDB file (optional)")
 
 	// CLI generation flags
 	requestType := flag.String("type", "random", "Request type: site, app, or random")
@@ -36,7 +39,7 @@ func main() {
 	flag.Parse()
 
 	if *serverMode {
-		runServer(*port, *tasksFile, *outDir, *schedulerInterval)
+		runServer(*port, *tasksFile, *outDir, *schedulerInterval, *mmdbPath)
 		return
 	}
 
@@ -73,16 +76,26 @@ func main() {
 	}
 }
 
-func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration) {
+func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, mmdbPath string) {
 	store, err := NewTaskStore(tasksFile)
 	if err != nil {
 		log.Fatalf("load task store: %v", err)
 	}
 
-	scheduler := NewScheduler(store, outDir, schedulerInterval)
+	var mmdb *geoip2.Reader
+	if mmdbPath != "" {
+		mmdb, err = geoip2.Open(mmdbPath)
+		if err != nil {
+			log.Fatalf("open mmdb: %v", err)
+		}
+		defer mmdb.Close()
+		log.Printf("MaxMind MMDB loaded: %s", mmdbPath)
+	}
+
+	scheduler := NewScheduler(store, outDir, schedulerInterval, mmdb)
 	go scheduler.Start()
 
-	srv := NewServer(store)
+	srv := NewServer(store, mmdb)
 	addr := ":" + port
 	log.Printf("HTTP server listening on %s", addr)
 	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {

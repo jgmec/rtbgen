@@ -8,20 +8,24 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"github.com/oschwald/geoip2-golang"
 )
 
 type Scheduler struct {
 	store    *TaskStore
 	outDir   string
 	interval time.Duration
+	mmdb     *geoip2.Reader
 	stop     chan struct{}
 }
 
-func NewScheduler(store *TaskStore, outDir string, interval time.Duration) *Scheduler {
+func NewScheduler(store *TaskStore, outDir string, interval time.Duration, mmdb *geoip2.Reader) *Scheduler {
 	return &Scheduler{
 		store:    store,
 		outDir:   outDir,
 		interval: interval,
+		mmdb:     mmdb,
 		stop:     make(chan struct{}),
 	}
 }
@@ -54,7 +58,7 @@ func (sc *Scheduler) run(now time.Time) {
 	log.Printf("scheduler tick: %d active task(s)", len(tasks))
 	for _, task := range tasks {
 		if err := sc.generateForTask(task, now); err != nil {
-			log.Printf("task %s: generation error: %v", task.ID, err)
+			log.Printf("task %s: generation error: %v", task.CorrelationID, err)
 		}
 	}
 }
@@ -65,7 +69,7 @@ func (sc *Scheduler) generateForTask(task *Task, now time.Time) error {
 	}
 
 	filename := filepath.Join(sc.outDir,
-		fmt.Sprintf("task_%s_%d.jsonl", task.ID, now.Unix()))
+		fmt.Sprintf("task_%s_%d.jsonl", task.CorrelationID, now.Unix()))
 
 	f, err := os.Create(filename)
 	if err != nil {
@@ -75,10 +79,11 @@ func (sc *Scheduler) generateForTask(task *Task, now time.Time) error {
 
 	w := bufio.NewWriter(f)
 
+	var lastReq *BidRequest
 	for i := 0; i < task.Count; i++ {
 		t := time.Now()
-		req := generateRequestForTask(task, t.Add(-sc.interval), t)
-		line, err := json.Marshal(req)
+		lastReq = generateRequestForTask(task, t.Add(-sc.interval), t, task.LastGeo)
+		line, err := json.Marshal(lastReq)
 		if err != nil {
 			return fmt.Errorf("marshal request: %w", err)
 		}
@@ -89,6 +94,14 @@ func (sc *Scheduler) generateForTask(task *Task, now time.Time) error {
 	if err := w.Flush(); err != nil {
 		return fmt.Errorf("flush: %w", err)
 	}
-	log.Printf("task %s: wrote %d requests -> %s", task.ID, task.Count, filename)
+
+	// Persist the last generated location so the next tick starts from here.
+	if lastReq != nil && lastReq.Device != nil && lastReq.Device.Geo != nil {
+		task.LastGeo = lastReq.Device.Geo
+		sc.store.Add(task)
+	}
+
+	log.Printf("task %s: wrote %d requests -> %s", task.CorrelationID, task.Count, filename)
 	return nil
 }
+

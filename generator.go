@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"math/rand"
 	"time"
 )
@@ -15,6 +16,7 @@ type GeneratorConfig struct {
 	MaxBidFloor    float64
 	TestMode       bool
 	BoundingBox    *BoundingBox // nil = use random city geo
+	NearGeo        *Geo         // if set, generate geo within 1 km of this point
 }
 
 // Default configuration
@@ -341,7 +343,9 @@ func generateDevice(config GeneratorConfig) *Device {
 	heights := []int{568, 667, 812, 1024, 1366, 1080}
 
 	geo := generateGeo()
-	if config.BoundingBox != nil {
+	if config.NearGeo != nil {
+		geo = generateGeoNear(config.NearGeo.Lat, config.NearGeo.Lon, 1.0)
+	} else if config.BoundingBox != nil {
 		geo = generateGeoInBBox(config.BoundingBox)
 	}
 
@@ -553,6 +557,21 @@ func randomTimestamp(start, end time.Time) time.Time {
 	return start.Add(time.Duration(rand.Int63n(int64(delta))))
 }
 
+// generateGeoNear generates a Geo point uniformly within radiusKm of (lat, lon).
+func generateGeoNear(lat, lon, radiusKm float64) *Geo {
+	const kmPerDegree = 111.0
+	angle := rand.Float64() * 2 * math.Pi
+	// sqrt gives uniform distribution within the circle
+	distance := math.Sqrt(rand.Float64()) * radiusKm
+	deltaLat := distance * math.Cos(angle) / kmPerDegree
+	deltaLon := distance * math.Sin(angle) / (kmPerDegree * math.Cos(lat*math.Pi/180))
+	return &Geo{
+		Lat:  lat + deltaLat,
+		Lon:  lon + deltaLon,
+		Type: 1, // GPS
+	}
+}
+
 // generateGeoInBBox generates a Geo point uniformly within the bounding box.
 func generateGeoInBBox(bbox *BoundingBox) *Geo {
 	return &Geo{
@@ -564,12 +583,17 @@ func generateGeoInBBox(bbox *BoundingBox) *Geo {
 
 // generateRequestForTask creates a BidRequest tailored to a task's criteria,
 // with a random timestamp in [windowStart, windowEnd).
-func generateRequestForTask(task *Task, windowStart, windowEnd time.Time) *BidRequest {
+func generateRequestForTask(task *Task, windowStart, windowEnd time.Time, baseGeo *Geo) *BidRequest {
 	config := DefaultConfig
-	if task.CriteriaType == CriteriaBBox && task.Geometry != nil {
-		if bb, err := task.Geometry.bbox(); err == nil {
-			config.BoundingBox = bb
+	switch task.CriteriaType {
+	case CriteriaBBox:
+		if task.Geometry != nil {
+			if bb, err := task.Geometry.bbox(); err == nil {
+				config.BoundingBox = bb
+			}
 		}
+	case CriteriaIFA, CriteriaIP:
+		config.NearGeo = baseGeo
 	}
 
 	req := GenerateRandomBidRequestWithConfig("random", "banner", config)
@@ -583,7 +607,7 @@ func generateRequestForTask(task *Task, windowStart, windowEnd time.Time) *BidRe
 
 	ts := randomTimestamp(windowStart, windowEnd)
 	req.Ext = map[string]any{
-		"task_id":        task.ID,
+		"task_id":        task.CorrelationID,
 		"correlation_id": task.CorrelationID,
 		"timestamp":      ts.UnixMilli(),
 	}

@@ -6,11 +6,15 @@ A Go CLI tool and HTTP service for generating random [OpenRTB 2.5](https://www.i
 
 - Generates fully compliant OpenRTB 2.5 bid requests
 - Supports banner, video, audio, and native impression types
-- Optional geographic bounding box filtering
 - Timestamps randomized within a configurable sliding window
 - HTTP service for managing long-running generation tasks
 - Persistent task storage (JSON file)
 - Background scheduler generating JSONL output for active tasks
+- Three geo criteria modes: IP address, IFA, or GeoJSON bounding box
+- IP-based geo lookup via MaxMind GeoIP2 MMDB
+- Geo anchor persisted per task — location stays consistent across scheduler ticks and server restarts
+- Generated locations scattered within 1 km radius of the anchor (IP/IFA) or randomly within the polygon (bbox)
+- Docker and Docker Compose support
 
 ## Installation
 
@@ -77,10 +81,19 @@ Start the server:
 | `-tasks-file` | `tasks.json` | Path to task persistence file |
 | `-out-dir` | `output` | Directory for generated JSONL files |
 | `-scheduler-interval` | `5m` | How often active tasks generate requests |
+| `-mmdb` | | Path to MaxMind GeoIP2 City MMDB file (optional) |
 
 ```bash
-./rtb-generator -server -port=8080 -scheduler-interval=1m -out-dir=./output
+./rtb-generator -server -port=8080 -scheduler-interval=1m -out-dir=./output -mmdb=./GeoLite2-City.mmdb
 ```
+
+### MaxMind MMDB
+
+When `-mmdb` is provided, IP-criteria tasks look up the IP address coordinates from the MMDB on the first scheduler tick. The resolved coordinates become the starting point (`last_geo`) for location generation.
+
+If the MMDB is not configured, or the IP is not found (e.g. private/reserved addresses), the service falls back to a random city location.
+
+Download a free database from [MaxMind GeoLite2](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data).
 
 ### API
 
@@ -112,11 +125,11 @@ POST /tasks
 
 `criteria_type` must be one of:
 
-| Value | Required field | Format |
+| Value | Required field | Geo behaviour |
 |---|---|---|
-| `ip` | `ip_address` | IPv4/IPv6 string |
-| `ifa` | `ifa` | UUID string |
-| `bbox` | `geometry` | GeoJSON `Polygon` — coordinates are `[longitude, latitude]` |
+| `ip` | `ip_address` | Coordinates from MaxMind MMDB lookup; requests within 1 km radius |
+| `ifa` | `ifa` | Random city anchor; requests within 1 km radius |
+| `bbox` | `geometry` | GeoJSON `Polygon` (coordinates as `[longitude, latitude]`); requests randomly distributed inside the polygon |
 
 Returns `201 Created` with the created task object.
 
@@ -130,7 +143,7 @@ curl -X POST http://localhost:8080/tasks \
     "start_time": "2026-03-24T10:00:00Z",
     "end_time":   "2026-03-24T18:00:00Z",
     "criteria_type": "ip",
-    "ip_address": "203.0.113.42",
+    "ip_address": "8.8.8.8",
     "count": 50
   }'
 ```
@@ -206,10 +219,10 @@ Task status is derived from the current time relative to the task's time window:
 
 ### Scheduler
 
-Every `-scheduler-interval`, the scheduler finds all `active` tasks and generates `count` RTB requests for each. Output is written as newline-delimited JSON to:
+Every `-scheduler-interval`, the scheduler finds all `active` tasks and generates `count` RTB requests for each, writing them as newline-delimited JSON to:
 
 ```
-{out-dir}/task_{id}_{unix_timestamp}.jsonl
+{out-dir}/task_{correlation_id}_{unix_timestamp}.jsonl
 ```
 
 Each request includes an `ext` object:
@@ -226,9 +239,45 @@ Each request includes an `ext` object:
 
 `timestamp` is a Unix millisecond value randomized within `[now - scheduler-interval, now]`.
 
+### Geo anchor persistence
+
+For `ip` and `ifa` tasks, `last_geo` is persisted in `tasks.json` after every scheduler tick. It holds the last generated location of that tick and becomes the starting anchor for the next tick.
+
+On the first tick the initial anchor is resolved as follows:
+- **ip** — coordinates from the MaxMind MMDB lookup for the given IP address
+- **ifa** — a random city
+
+This produces a continuous walking path: each tick generates locations within 1 km of where the previous tick ended, and any two consecutive locations across ticks are always within 2 km of each other. `last_geo` survives server restarts.
+
+## Docker
+
+```bash
+docker compose up --build
+```
+
+Configuration is read from `.env`. Copy `.env.example` to `.env` and adjust:
+
+```env
+PORT=8081
+TASKS_FILE=/app/data/tasks.json
+OUT_DIR=/app/data/output
+SCHEDULER_INTERVAL=5m
+MMDB_PATH=/app/data/GeoLite2-City.mmdb
+BBOX_MAX_LAT=
+BBOX_MAX_LON=
+BBOX_MIN_LAT=
+BBOX_MIN_LON=
+```
+
+Place the MMDB file in `./data/` and set `MMDB_PATH` accordingly. If `MMDB_PATH` is empty, MMDB lookup is disabled and IP tasks fall back to a random city.
+
+The `./data/` directory is mounted into the container at `/app/data` and holds tasks, output JSONL files, and optionally the MMDB file.
+
 ## Running tests
 
 ```bash
 go test ./...
 go test -cover ./...
 ```
+
+MMDB integration tests require `data/GeoLite2-City.mmdb` to be present; they are skipped automatically when the file is absent.

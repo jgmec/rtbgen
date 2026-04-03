@@ -78,7 +78,6 @@ func (g *GeoJSONGeometry) bbox() (*BoundingBox, error) {
 }
 
 type Task struct {
-	ID            string           `json:"id"`
 	CorrelationID string           `json:"correlation_id"`
 	StartTime     time.Time        `json:"start_time"`
 	EndTime       time.Time        `json:"end_time"`
@@ -86,6 +85,7 @@ type Task struct {
 	IPAddress     string           `json:"ip_address,omitempty"`
 	IFA           string           `json:"ifa,omitempty"`
 	Geometry      *GeoJSONGeometry `json:"geometry,omitempty"`
+	LastGeo       *Geo             `json:"last_geo,omitempty"`
 	Count         int              `json:"count"`
 	Status        TaskStatus       `json:"status"`
 	CreatedAt     time.Time        `json:"created_at"`
@@ -112,7 +112,7 @@ func NewTaskStore(filePath string) (*TaskStore, error) {
 func (s *TaskStore) Add(task *Task) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.tasks[task.ID] = task
+	s.tasks[task.CorrelationID] = task
 	return s.save()
 }
 
@@ -194,7 +194,7 @@ func (s *TaskStore) load() error {
 		return fmt.Errorf("unmarshal tasks: %w", err)
 	}
 	for _, t := range tasks {
-		s.tasks[t.ID] = t
+		s.tasks[t.CorrelationID] = t
 	}
 	return nil
 }

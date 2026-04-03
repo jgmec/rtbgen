@@ -1,5 +1,7 @@
 rtb-generator
+.env
 
+data/
 
 output*
 
@@ -7,3 +9,4 @@ output*
 
 tasks.json
 
+rtb-generator

@@ -1,9 +1,15 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"math"
+	"net"
 	"os"
 	"testing"
 	"time"
+
+	"github.com/oschwald/geoip2-golang"
 )
 
 func TestGenerateAudio(t *testing.T) {
@@ -105,13 +111,12 @@ func TestGenerateDeviceWithBBox(t *testing.T) {
 
 func TestGenerateRequestForTask_IP(t *testing.T) {
 	task := &Task{
-		ID:            "task-1",
-		CorrelationID: "corr-1",
+		CorrelationID: "task-1",
 		CriteriaType:  CriteriaIP,
 		IPAddress:     "10.0.0.1",
 	}
 	now := time.Now()
-	req := generateRequestForTask(task, now.Add(-5*time.Minute), now)
+	req := generateRequestForTask(task, now.Add(-5*time.Minute), now, nil)
 
 	if req.Device.IP != "10.0.0.1" {
 		t.Errorf("got IP %q, want %q", req.Device.IP, "10.0.0.1")
@@ -123,11 +128,187 @@ func TestGenerateRequestForTask_IP(t *testing.T) {
 	if ext["task_id"] != "task-1" {
 		t.Errorf("ext.task_id: got %v, want task-1", ext["task_id"])
 	}
-	if ext["correlation_id"] != "corr-1" {
-		t.Errorf("ext.correlation_id: got %v, want corr-1", ext["correlation_id"])
+	if ext["correlation_id"] != "task-1" {
+		t.Errorf("ext.correlation_id: got %v, want task-1", ext["correlation_id"])
 	}
 	if _, ok := ext["timestamp"]; !ok {
 		t.Error("ext.timestamp should be set")
+	}
+}
+
+func TestGenerateGeoNear(t *testing.T) {
+	baseLat, baseLon := 51.5074, -0.1278 // London
+	const radiusKm = 1.0
+	const kmPerDegree = 111.0
+
+	for range 50 {
+		geo := generateGeoNear(baseLat, baseLon, radiusKm)
+		dLat := (geo.Lat - baseLat) * kmPerDegree
+		dLon := (geo.Lon - baseLon) * kmPerDegree * math.Cos(baseLat*math.Pi/180)
+		dist := math.Sqrt(dLat*dLat + dLon*dLon)
+		if dist > radiusKm {
+			t.Errorf("point is %.3f km from base, want <= %.1f km", dist, radiusKm)
+		}
+	}
+}
+
+func TestGenerateRequestForTask_IFA_SameLocation(t *testing.T) {
+	baseGeo := generateGeo()
+	task := &Task{
+		CorrelationID: "ifa-task",
+		CriteriaType:  CriteriaIFA,
+		IFA:           "ifa-abc-123",
+	}
+	now := time.Now()
+	const radiusKm = 1.0
+	const kmPerDegree = 111.0
+
+	for range 20 {
+		req := generateRequestForTask(task, now.Add(-5*time.Minute), now, baseGeo)
+		geo := req.Device.Geo
+		dLat := (geo.Lat - baseGeo.Lat) * kmPerDegree
+		dLon := (geo.Lon - baseGeo.Lon) * kmPerDegree * math.Cos(baseGeo.Lat*math.Pi/180)
+		dist := math.Sqrt(dLat*dLat + dLon*dLon)
+		if dist > radiusKm {
+			t.Errorf("IFA request geo is %.3f km from base, want <= %.1f km", dist, radiusKm)
+		}
+	}
+}
+
+func geoDistanceKm(lat1, lon1, lat2, lon2 float64) float64 {
+	const kmPerDegree = 111.0
+	avgLat := (lat1 + lat2) / 2
+	dLat := (lat2 - lat1) * kmPerDegree
+	dLon := (lon2 - lon1) * kmPerDegree * math.Cos(avgLat*math.Pi/180)
+	return math.Sqrt(dLat*dLat + dLon*dLon)
+}
+
+func TestIFA_ConsecutiveLocationsWithin2km(t *testing.T) {
+	baseGeo := generateGeo()
+	task := &Task{
+		CorrelationID: "ifa-task",
+		CriteriaType:  CriteriaIFA,
+		IFA:           "38400000-8cf0-11bd-b23e-10b96e40000d",
+	}
+	now := time.Now()
+	const count = 50
+	const radiusKm = 1.0
+	const kmPerDegree = 111.0
+
+	// Bounding box of the 1 km radius circle around the base point.
+	latDelta := radiusKm / kmPerDegree
+	lonDelta := radiusKm / (kmPerDegree * math.Cos(baseGeo.Lat*math.Pi/180))
+	bbox := BoundingBox{
+		MinLat: baseGeo.Lat - latDelta,
+		MaxLat: baseGeo.Lat + latDelta,
+		MinLon: baseGeo.Lon - lonDelta,
+		MaxLon: baseGeo.Lon + lonDelta,
+	}
+
+	reqs := make([]*BidRequest, count)
+	for i := range count {
+		reqs[i] = generateRequestForTask(task, now.Add(-5*time.Minute), now, baseGeo)
+	}
+
+	for i, req := range reqs {
+		geo := req.Device.Geo
+
+		// All locations within bounding box of 1 km radius.
+		if geo.Lat < bbox.MinLat || geo.Lat > bbox.MaxLat {
+			t.Errorf("request %d: lat %.6f outside bbox [%.6f, %.6f]", i, geo.Lat, bbox.MinLat, bbox.MaxLat)
+		}
+		if geo.Lon < bbox.MinLon || geo.Lon > bbox.MaxLon {
+			t.Errorf("request %d: lon %.6f outside bbox [%.6f, %.6f]", i, geo.Lon, bbox.MinLon, bbox.MaxLon)
+		}
+
+		// Consecutive locations within 2 km.
+		if i == 0 {
+			continue
+		}
+		prev := reqs[i-1].Device.Geo
+		dist := geoDistanceKm(prev.Lat, prev.Lon, geo.Lat, geo.Lon)
+		if dist > 2.0 {
+			t.Errorf("requests %d and %d are %.3f km apart, want <= 2 km", i-1, i, dist)
+		}
+	}
+}
+
+func TestIFA_ConsistentBaseGeoAcrossSchedulerRuns(t *testing.T) {
+	store := newTestStore(t)
+	outDir := t.TempDir()
+	srv := NewServer(store, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil)
+
+	now := time.Now()
+	task := &Task{
+		CorrelationID: "ifa-persist",
+		StartTime:     now.Add(-time.Hour),
+		EndTime:       now.Add(time.Hour),
+		CriteriaType:  CriteriaIFA,
+		IFA:           "38400000-8cf0-11bd-b23e-10b96e40000d",
+		Count:         10,
+		LastGeo:       srv.resolveInitialGeo(CriteriaIFA, ""),
+	}
+	store.Add(task)
+
+	sc.run(now)
+
+	// After tick 1: LastGeo must be persisted.
+	afterTick1, _ := store.Get(task.CorrelationID)
+	if afterTick1.LastGeo == nil {
+		t.Fatal("LastGeo should be persisted after first scheduler run")
+	}
+	lastGeoTick1 := afterTick1.LastGeo
+
+	sc.run(now.Add(5 * time.Minute))
+
+	// After tick 2: LastGeo should be updated.
+	afterTick2, _ := store.Get(task.CorrelationID)
+	if afterTick2.LastGeo == nil {
+		t.Fatal("LastGeo should be persisted after second scheduler run")
+	}
+
+	entries, _ := os.ReadDir(outDir)
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 output files (one per run), got %d", len(entries))
+	}
+
+	// Collect all requests from both ticks and verify consecutive pairs are within 2 km.
+	// Tick 2 requests must also be within 1 km of the LastGeo anchor inherited from tick 1.
+	var allReqs []*BidRequest
+	for i, entry := range entries {
+		data, _ := os.ReadFile(outDir + "/" + entry.Name())
+		for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+			var req BidRequest
+			if err := json.Unmarshal(line, &req); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			// Tick 2 requests must be within 1 km of the anchor LastGeo carried from tick 1.
+			if i == 1 {
+				geo := req.Device.Geo
+				const radiusKm = 1.0
+				const kmPerDegree = 111.0
+				latDelta := radiusKm / kmPerDegree
+				lonDelta := radiusKm / (kmPerDegree * math.Cos(lastGeoTick1.Lat*math.Pi/180))
+				if geo.Lat < lastGeoTick1.Lat-latDelta || geo.Lat > lastGeoTick1.Lat+latDelta {
+					t.Errorf("tick 2: lat %.6f outside 1 km bbox of tick-1 anchor [%.6f, %.6f]",
+						geo.Lat, lastGeoTick1.Lat-latDelta, lastGeoTick1.Lat+latDelta)
+				}
+				if geo.Lon < lastGeoTick1.Lon-lonDelta || geo.Lon > lastGeoTick1.Lon+lonDelta {
+					t.Errorf("tick 2: lon %.6f outside 1 km bbox of tick-1 anchor [%.6f, %.6f]",
+						geo.Lon, lastGeoTick1.Lon-lonDelta, lastGeoTick1.Lon+lonDelta)
+				}
+			}
+			allReqs = append(allReqs, &req)
+		}
+	}
+
+	for i := 1; i < len(allReqs); i++ {
+		prev := allReqs[i-1].Device.Geo
+		cur := allReqs[i].Device.Geo
+		if dist := geoDistanceKm(prev.Lat, prev.Lon, cur.Lat, cur.Lon); dist > 2.0 {
+			t.Errorf("requests %d and %d are %.3f km apart, want <= 2 km", i-1, i, dist)
+		}
 	}
 }
 
@@ -137,7 +318,7 @@ func TestGenerateRequestForTask_IFA(t *testing.T) {
 		IFA:          "ifa-abc-123",
 	}
 	now := time.Now()
-	req := generateRequestForTask(task, now.Add(-5*time.Minute), now)
+	req := generateRequestForTask(task, now.Add(-5*time.Minute), now, nil)
 
 	if req.Device.IFA != "ifa-abc-123" {
 		t.Errorf("got IFA %q, want %q", req.Device.IFA, "ifa-abc-123")
@@ -151,7 +332,7 @@ func TestGenerateRequestForTask_BBox(t *testing.T) {
 	}
 	now := time.Now()
 	for range 10 {
-		req := generateRequestForTask(task, now.Add(-5*time.Minute), now)
+		req := generateRequestForTask(task, now.Add(-5*time.Minute), now, nil)
 		geo := req.Device.Geo
 		if geo.Lat < 50.0 || geo.Lat > 51.0 {
 			t.Errorf("lat %f outside bbox", geo.Lat)
@@ -243,7 +424,7 @@ func TestGenerateImpression_Random(t *testing.T) {
 }
 
 func TestScheduler_StartStop(t *testing.T) {
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 100*time.Millisecond)
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 100*time.Millisecond, nil)
 	done := make(chan struct{})
 	go func() {
 		sc.Start()
@@ -259,7 +440,7 @@ func TestScheduler_StartStop(t *testing.T) {
 
 func TestScheduler_RunNoActiveTasks(t *testing.T) {
 	outDir := t.TempDir()
-	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute)
+	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil)
 	sc.run(time.Now())
 	entries, _ := os.ReadDir(outDir)
 	if len(entries) != 0 {
@@ -271,8 +452,8 @@ func TestScheduler_GenerateForTask_OutDirError(t *testing.T) {
 	// Use a file as the output dir so MkdirAll fails.
 	blockingFile := t.TempDir() + "/file"
 	os.WriteFile(blockingFile, []byte("x"), 0644)
-	sc := NewScheduler(newTestStore(t), blockingFile+"/subdir", 5*time.Minute)
-	err := sc.generateForTask(&Task{ID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
+	sc := NewScheduler(newTestStore(t), blockingFile+"/subdir", 5*time.Minute, nil)
+	err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
 	if err == nil {
 		t.Error("expected error when outDir cannot be created")
 	}
@@ -282,8 +463,8 @@ func TestScheduler_GenerateForTask_FileCreateError(t *testing.T) {
 	outDir := t.TempDir()
 	os.Chmod(outDir, 0444)
 	defer os.Chmod(outDir, 0755)
-	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute)
-	err := sc.generateForTask(&Task{ID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
+	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil)
+	err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
 	if err == nil {
 		t.Error("expected error when output file cannot be created")
 	}
@@ -292,11 +473,10 @@ func TestScheduler_GenerateForTask_FileCreateError(t *testing.T) {
 func TestScheduler_GenerateForTask(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
-	sc := NewScheduler(store, outDir, 5*time.Minute)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil)
 
 	now := time.Now()
 	task := &Task{
-		ID:            randomID(),
 		CorrelationID: "corr",
 		StartTime:     now.Add(-time.Hour),
 		EndTime:       now.Add(time.Hour),
@@ -321,11 +501,10 @@ func TestScheduler_GenerateForTask(t *testing.T) {
 func TestScheduler_Run(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
-	sc := NewScheduler(store, outDir, 5*time.Minute)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil)
 
 	now := time.Now()
 	active := &Task{
-		ID:            randomID(),
 		CorrelationID: "corr",
 		StartTime:     now.Add(-time.Hour),
 		EndTime:       now.Add(time.Hour),
@@ -340,5 +519,204 @@ func TestScheduler_Run(t *testing.T) {
 	entries, _ := os.ReadDir(outDir)
 	if len(entries) != 1 {
 		t.Errorf("got %d output files, want 1", len(entries))
+	}
+}
+
+// openTestMMDB opens the local GeoLite2-City.mmdb for integration tests.
+// Skips the test if the file is not present.
+func openTestMMDB(t *testing.T) *geoip2.Reader {
+	t.Helper()
+	const mmdbPath = "data/GeoLite2-City.mmdb"
+	if _, err := os.Stat(mmdbPath); os.IsNotExist(err) {
+		t.Skip("GeoLite2-City.mmdb not found; skipping MMDB integration test")
+	}
+	db, err := geoip2.Open(mmdbPath)
+	if err != nil {
+		t.Fatalf("open mmdb: %v", err)
+	}
+	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+func TestLookupIPGeo_NilMMDB(t *testing.T) {
+	srv := NewServer(newTestStore(t), nil)
+	geo := srv.lookupIPGeo("8.8.8.8")
+	if geo == nil {
+		t.Fatal("expected non-nil geo when mmdb is nil")
+	}
+}
+
+func TestLookupIPGeo_InvalidIP(t *testing.T) {
+	srv := NewServer(newTestStore(t), nil)
+	geo := srv.lookupIPGeo("not-an-ip")
+	if geo == nil {
+		t.Fatal("expected non-nil fallback geo for invalid IP")
+	}
+}
+
+func TestLookupIPGeo_WithMMDB_PublicIP(t *testing.T) {
+	db := openTestMMDB(t)
+	srv := NewServer(newTestStore(t), db)
+	geo := srv.lookupIPGeo("8.8.8.8")
+	if geo == nil {
+		t.Fatal("expected non-nil geo for 8.8.8.8")
+	}
+	if geo.Lat == 0 && geo.Lon == 0 {
+		t.Error("expected non-zero lat/lon from MMDB lookup")
+	}
+	if geo.Country == "" {
+		t.Error("expected non-empty country from MMDB lookup")
+	}
+}
+
+func TestLookupIPGeo_WithMMDB_PrivateIP(t *testing.T) {
+	db := openTestMMDB(t)
+	srv := NewServer(newTestStore(t), db)
+	geo := srv.lookupIPGeo("192.168.1.1")
+	if geo == nil {
+		t.Fatal("expected non-nil fallback geo for private IP")
+	}
+}
+
+func TestResolveInitialGeo_BBoxReturnsNil(t *testing.T) {
+	srv := NewServer(newTestStore(t), nil)
+	geo := srv.resolveInitialGeo(CriteriaBBox, "")
+	if geo != nil {
+		t.Errorf("expected nil geo for bbox task, got %+v", geo)
+	}
+}
+
+func TestGenerateRandomBidRequestWithConfig_TestMode(t *testing.T) {
+	config := DefaultConfig
+	config.TestMode = true
+	req := GenerateRandomBidRequestWithConfig("site", "banner", config)
+	if req.Test != 1 {
+		t.Errorf("expected Test=1 in test mode, got %d", req.Test)
+	}
+}
+
+// TestIP_InitialGeoFromMMDB verifies that when a task uses criteria_type=ip and an
+// MMDB is configured, generated locations for the first tick are within 1 km of
+// the MMDB coordinates for the given IP.
+func TestIP_InitialGeoFromMMDB(t *testing.T) {
+	db := openTestMMDB(t)
+	store := newTestStore(t)
+	outDir := t.TempDir()
+	srv := NewServer(store, db)
+	sc := NewScheduler(store, outDir, 5*time.Minute, db)
+
+	// Look up expected coordinates directly from the MMDB.
+	record, err := db.City(net.ParseIP("8.8.8.8"))
+	if err != nil || (record.Location.Latitude == 0 && record.Location.Longitude == 0) {
+		t.Skip("8.8.8.8 not found in MMDB")
+	}
+	expectedLat := record.Location.Latitude
+	expectedLon := record.Location.Longitude
+
+	now := time.Now()
+	task := &Task{
+		CorrelationID: "ip-mmdb-test",
+		StartTime:     now.Add(-time.Hour),
+		EndTime:       now.Add(time.Hour),
+		CriteriaType:  CriteriaIP,
+		IPAddress:     "8.8.8.8",
+		Count:         10,
+		LastGeo:       srv.resolveInitialGeo(CriteriaIP, "8.8.8.8"),
+	}
+	store.Add(task)
+
+	sc.run(now)
+
+	// All generated locations must be within 1 km of the MMDB coordinates.
+	entries, _ := os.ReadDir(outDir)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 output file, got %d", len(entries))
+	}
+	data, _ := os.ReadFile(outDir + "/" + entries[0].Name())
+	for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+		var req BidRequest
+		if err := json.Unmarshal(line, &req); err != nil {
+			t.Fatalf("unmarshal: %v", err)
+		}
+		dist := geoDistanceKm(expectedLat, expectedLon, req.Device.Geo.Lat, req.Device.Geo.Lon)
+		if dist > 1.0 {
+			t.Errorf("location (%.4f, %.4f) is %.3f km from MMDB point (%.4f, %.4f), want <= 1 km",
+				req.Device.Geo.Lat, req.Device.Geo.Lon, dist, expectedLat, expectedLon)
+		}
+	}
+}
+
+// TestIP_ConsecutiveLocationsWithin2km verifies that for an IP task:
+// - Tick 1 requests are within 1 km of BaseGeo.
+// - Tick 2 requests are within 1 km of LastGeo from tick 1.
+// - All consecutive pairs across both ticks are within 2 km.
+func TestIP_ConsecutiveLocationsWithin2km(t *testing.T) {
+	store := newTestStore(t)
+	outDir := t.TempDir()
+	srv := NewServer(store, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil)
+
+	const count = 50
+	now := time.Now()
+	task := &Task{
+		CorrelationID: "ip-proximity",
+		StartTime:     now.Add(-time.Hour),
+		EndTime:       now.Add(time.Hour),
+		CriteriaType:  CriteriaIP,
+		IPAddress:     "8.8.8.8",
+		Count:         count,
+		LastGeo:       srv.resolveInitialGeo(CriteriaIP, "8.8.8.8"),
+	}
+	store.Add(task)
+
+	sc.run(now)
+
+	afterTick1, _ := store.Get(task.CorrelationID)
+	if afterTick1.LastGeo == nil {
+		t.Fatal("LastGeo should be persisted after first scheduler run")
+	}
+	lastGeoTick1 := afterTick1.LastGeo
+
+	sc.run(now.Add(5 * time.Minute))
+
+	entries, _ := os.ReadDir(outDir)
+	if len(entries) != 2 {
+		t.Fatalf("expected 2 output files, got %d", len(entries))
+	}
+
+	var allReqs []*BidRequest
+	for i, entry := range entries {
+		data, _ := os.ReadFile(outDir + "/" + entry.Name())
+		for _, line := range bytes.Split(bytes.TrimSpace(data), []byte("\n")) {
+			var req BidRequest
+			if err := json.Unmarshal(line, &req); err != nil {
+				t.Fatalf("unmarshal: %v", err)
+			}
+			// Tick 2 requests must be within 1 km of the anchor inherited from tick 1.
+			if i == 1 {
+				geo := req.Device.Geo
+				const radiusKm = 1.0
+				const kmPerDegree = 111.0
+				latDelta := radiusKm / kmPerDegree
+				lonDelta := radiusKm / (kmPerDegree * math.Cos(lastGeoTick1.Lat*math.Pi/180))
+				if geo.Lat < lastGeoTick1.Lat-latDelta || geo.Lat > lastGeoTick1.Lat+latDelta {
+					t.Errorf("tick 2: lat %.6f outside 1 km bbox of tick-1 anchor [%.6f, %.6f]",
+						geo.Lat, lastGeoTick1.Lat-latDelta, lastGeoTick1.Lat+latDelta)
+				}
+				if geo.Lon < lastGeoTick1.Lon-lonDelta || geo.Lon > lastGeoTick1.Lon+lonDelta {
+					t.Errorf("tick 2: lon %.6f outside 1 km bbox of tick-1 anchor [%.6f, %.6f]",
+						geo.Lon, lastGeoTick1.Lon-lonDelta, lastGeoTick1.Lon+lonDelta)
+				}
+			}
+			allReqs = append(allReqs, &req)
+		}
+	}
+
+	for i := 1; i < len(allReqs); i++ {
+		prev := allReqs[i-1].Device.Geo
+		cur := allReqs[i].Device.Geo
+		if dist := geoDistanceKm(prev.Lat, prev.Lon, cur.Lat, cur.Lon); dist > 2.0 {
+			t.Errorf("requests %d and %d are %.3f km apart, want <= 2 km", i-1, i, dist)
+		}
 	}
 }

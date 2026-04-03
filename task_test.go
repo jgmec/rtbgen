@@ -65,8 +65,7 @@ func newTestStore(t *testing.T) *TaskStore {
 
 func sampleTask() *Task {
 	return &Task{
-		ID:            randomID(),
-		CorrelationID: "corr-1",
+		CorrelationID: randomID(),
 		StartTime:     pastTime,
 		EndTime:       futureTime,
 		CriteriaType:  CriteriaIP,
@@ -84,12 +83,12 @@ func TestTaskStoreAddAndGet(t *testing.T) {
 		t.Fatalf("Add: %v", err)
 	}
 
-	got, ok := store.Get(task.ID)
+	got, ok := store.Get(task.CorrelationID)
 	if !ok {
 		t.Fatal("Get: task not found")
 	}
-	if got.ID != task.ID {
-		t.Errorf("got ID %q, want %q", got.ID, task.ID)
+	if got.CorrelationID != task.CorrelationID {
+		t.Errorf("got ID %q, want %q", got.CorrelationID, task.CorrelationID)
 	}
 	if got.Status != TaskStatusActive {
 		t.Errorf("got status %q, want %q", got.Status, TaskStatusActive)
@@ -120,13 +119,13 @@ func TestTaskStoreDelete(t *testing.T) {
 	task := sampleTask()
 	store.Add(task)
 
-	if !store.Delete(task.ID) {
+	if !store.Delete(task.CorrelationID) {
 		t.Error("Delete: expected true for existing task")
 	}
-	if _, ok := store.Get(task.ID); ok {
+	if _, ok := store.Get(task.CorrelationID); ok {
 		t.Error("task still present after delete")
 	}
-	if store.Delete(task.ID) {
+	if store.Delete(task.CorrelationID) {
 		t.Error("Delete: expected false for already-deleted task")
 	}
 }
@@ -135,9 +134,9 @@ func TestTaskStoreActiveAt(t *testing.T) {
 	store := newTestStore(t)
 	now := time.Now()
 
-	active := &Task{ID: randomID(), StartTime: now.Add(-time.Hour), EndTime: now.Add(time.Hour), Count: 1}
-	pending := &Task{ID: randomID(), StartTime: now.Add(time.Hour), EndTime: now.Add(2 * time.Hour), Count: 1}
-	done := &Task{ID: randomID(), StartTime: now.Add(-2 * time.Hour), EndTime: now.Add(-time.Hour), Count: 1}
+	active := &Task{CorrelationID: "active", StartTime: now.Add(-time.Hour), EndTime: now.Add(time.Hour), Count: 1}
+	pending := &Task{CorrelationID: "pending", StartTime: now.Add(time.Hour), EndTime: now.Add(2 * time.Hour), Count: 1}
+	done := &Task{CorrelationID: "done", StartTime: now.Add(-2 * time.Hour), EndTime: now.Add(-time.Hour), Count: 1}
 
 	store.Add(active)
 	store.Add(pending)
@@ -147,8 +146,8 @@ func TestTaskStoreActiveAt(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("got %d active tasks, want 1", len(got))
 	}
-	if got[0].ID != active.ID {
-		t.Errorf("wrong active task: got %q, want %q", got[0].ID, active.ID)
+	if got[0].CorrelationID != active.CorrelationID {
+		t.Errorf("wrong active task: got %q, want %q", got[0].CorrelationID, active.CorrelationID)
 	}
 }
 
@@ -165,7 +164,7 @@ func TestTaskStorePersistence(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reload store: %v", err)
 	}
-	if _, ok := store2.Get(task.ID); !ok {
+	if _, ok := store2.Get(task.CorrelationID); !ok {
 		t.Error("task not found after reload")
 	}
 }

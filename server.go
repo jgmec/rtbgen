@@ -3,16 +3,20 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"time"
+
+	"github.com/oschwald/geoip2-golang"
 )
 
 type Server struct {
 	store *TaskStore
+	mmdb  *geoip2.Reader
 }
 
-func NewServer(store *TaskStore) *Server {
-	return &Server{store: store}
+func NewServer(store *TaskStore, mmdb *geoip2.Reader) *Server {
+	return &Server{store: store, mmdb: mmdb}
 }
 
 func (s *Server) Handler() http.Handler {
@@ -46,16 +50,16 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	task := &Task{
-		ID:            randomID(),
 		CorrelationID: req.CorrelationID,
 		StartTime:     req.StartTime,
 		EndTime:       req.EndTime,
 		CriteriaType:  req.CriteriaType,
 		IPAddress:     req.IPAddress,
-		IFA:      req.IFA,
-		Geometry: req.Geometry,
-		Count:    req.Count,
+		IFA:           req.IFA,
+		Geometry:      req.Geometry,
+		Count:         req.Count,
 		CreatedAt:     time.Now(),
+		LastGeo:       s.resolveInitialGeo(req.CriteriaType, req.IPAddress),
 	}
 	if err := s.store.Add(task); err != nil {
 		http.Error(w, fmt.Sprintf("failed to save task: %v", err), http.StatusInternalServerError)
@@ -100,6 +104,35 @@ func validateCreateTaskRequest(req CreateTaskRequest) error {
 		return fmt.Errorf("criteria_type must be one of: ip, ifa, bbox")
 	}
 	return nil
+}
+
+func (s *Server) resolveInitialGeo(criteriaType CriteriaType, ipAddress string) *Geo {
+	switch criteriaType {
+	case CriteriaIFA:
+		return generateGeo()
+	case CriteriaIP:
+		return s.lookupIPGeo(ipAddress)
+	}
+	return nil
+}
+
+func (s *Server) lookupIPGeo(ipStr string) *Geo {
+	if s.mmdb != nil {
+		ip := net.ParseIP(ipStr)
+		if ip != nil {
+			if record, err := s.mmdb.City(ip); err == nil &&
+				(record.Location.Latitude != 0 || record.Location.Longitude != 0) {
+				return &Geo{
+					Lat:     record.Location.Latitude,
+					Lon:     record.Location.Longitude,
+					Country: record.Country.IsoCode,
+					City:    record.City.Names["en"],
+					Type:    2,
+				}
+			}
+		}
+	}
+	return generateGeo()
 }
 
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {
