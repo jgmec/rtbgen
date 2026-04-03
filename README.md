@@ -64,6 +64,19 @@ Requires Go 1.22+.
 
 Each generated request includes an `ext.timestamp` field — a Unix millisecond timestamp randomized within `[now - scheduler-interval, now]`.
 
+### CLI vs HTTP service
+
+| Feature | CLI | HTTP service |
+|---|---|---|
+| Output | stdout (pretty or compact JSON) | JSONL files in `-out-dir` |
+| Task system | none — one-shot generation | persistent tasks with scheduler |
+| IFA | random per request | persistent device pool (`ip`/`bbox`) or fixed (`ifa`) |
+| IP address | random | pinned to task's `ip_address` (`ip` criteria) |
+| Geo | random or within `-bbox` | walking path persisted across ticks |
+| `-bbox` format | `maxlat,maxlon,minlat,minlon` | GeoJSON `Polygon` in request body |
+| `-mmdb` | parsed but unused | used to resolve IP coordinates at task creation |
+| `ext` fields | `timestamp` only | `task_id`, `correlation_id`, `timestamp` |
+
 ## HTTP Service
 
 Start the server:
