@@ -1,9 +1,11 @@
 package main
 
 import (
+	"archive/zip"
 	"bufio"
 	"encoding/json"
 	"fmt"
+	"io"
 	"log"
 	"math/rand"
 	"os"
@@ -120,7 +122,95 @@ func (sc *Scheduler) generateForTask(task *Task, now time.Time) error {
 	}
 
 	log.Printf("task %s: wrote %d requests -> %s", task.CorrelationID, task.Count, filename)
+
+	zipPath := filepath.Join(sc.outDir, "output.zip")
+	if err := appendToZip(zipPath, filename); err != nil {
+		log.Printf("task %s: zip error: %v", task.CorrelationID, err)
+	}
+
 	return nil
+}
+
+// appendToZip adds the file at filePath to the zip archive at zipPath.
+// If the archive does not exist it is created. Existing entries are preserved
+// by reading the current archive and rewriting via a temp file.
+func appendToZip(zipPath, filePath string) error {
+	tmpPath := zipPath + ".tmp"
+
+	out, err := os.Create(tmpPath)
+	if err != nil {
+		return fmt.Errorf("create temp zip: %w", err)
+	}
+
+	zw := zip.NewWriter(out)
+
+	// Copy existing entries if the archive already exists.
+	if existing, err := zip.OpenReader(zipPath); err == nil {
+		for _, entry := range existing.File {
+			w, err := zw.CreateHeader(&entry.FileHeader)
+			if err != nil {
+				existing.Close()
+				zw.Close()
+				out.Close()
+				os.Remove(tmpPath)
+				return fmt.Errorf("copy zip entry header: %w", err)
+			}
+			rc, err := entry.Open()
+			if err != nil {
+				existing.Close()
+				zw.Close()
+				out.Close()
+				os.Remove(tmpPath)
+				return fmt.Errorf("open zip entry: %w", err)
+			}
+			_, copyErr := io.Copy(w, rc)
+			rc.Close()
+			if copyErr != nil {
+				existing.Close()
+				zw.Close()
+				out.Close()
+				os.Remove(tmpPath)
+				return fmt.Errorf("copy zip entry data: %w", copyErr)
+			}
+		}
+		existing.Close()
+	}
+
+	// Add the new file.
+	w, err := zw.Create(filepath.Base(filePath))
+	if err != nil {
+		zw.Close()
+		out.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("create zip entry: %w", err)
+	}
+	src, err := os.Open(filePath)
+	if err != nil {
+		zw.Close()
+		out.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("open source file: %w", err)
+	}
+	_, copyErr := io.Copy(w, src)
+	src.Close()
+	if copyErr != nil {
+		zw.Close()
+		out.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("write zip entry: %w", copyErr)
+	}
+
+	if err := zw.Close(); err != nil {
+		out.Close()
+		os.Remove(tmpPath)
+		return fmt.Errorf("close zip writer: %w", err)
+	}
+	if err := out.Close(); err != nil {
+		os.Remove(tmpPath)
+		return fmt.Errorf("close temp zip: %w", err)
+	}
+
+	return os.Rename(tmpPath, zipPath)
 }
 
 // generateForDeviceTask generates count requests across a persistent device pool for IP and bbox tasks.

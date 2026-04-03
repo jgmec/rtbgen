@@ -6,11 +6,25 @@ import (
 	"math"
 	"net"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
 	"github.com/oschwald/geoip2-golang"
 )
+
+// readJSONLEntries returns only .jsonl directory entries, sorted by name.
+func readJSONLEntries(t *testing.T, dir string) []os.DirEntry {
+	t.Helper()
+	all, _ := os.ReadDir(dir)
+	var out []os.DirEntry
+	for _, e := range all {
+		if strings.HasSuffix(e.Name(), ".jsonl") {
+			out = append(out, e)
+		}
+	}
+	return out
+}
 
 func TestGenerateAudio(t *testing.T) {
 	audio := generateAudio()
@@ -268,7 +282,7 @@ func TestIFA_ConsistentBaseGeoAcrossSchedulerRuns(t *testing.T) {
 		t.Fatal("LastGeo should be persisted after second scheduler run")
 	}
 
-	entries, _ := os.ReadDir(outDir)
+	entries := readJSONLEntries(t, outDir)
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 output files (one per run), got %d", len(entries))
 	}
@@ -436,7 +450,7 @@ func TestScheduler_RunNoActiveTasks(t *testing.T) {
 	outDir := t.TempDir()
 	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil)
 	sc.run(time.Now())
-	entries, _ := os.ReadDir(outDir)
+	entries := readJSONLEntries(t, outDir)
 	if len(entries) != 0 {
 		t.Errorf("expected no output files, got %d", len(entries))
 	}
@@ -483,10 +497,7 @@ func TestScheduler_GenerateForTask(t *testing.T) {
 		t.Fatalf("generateForTask: %v", err)
 	}
 
-	entries, err := os.ReadDir(outDir)
-	if err != nil {
-		t.Fatalf("read outDir: %v", err)
-	}
+	entries := readJSONLEntries(t, outDir)
 	if len(entries) != 1 {
 		t.Fatalf("got %d files, want 1", len(entries))
 	}
@@ -510,7 +521,7 @@ func TestScheduler_Run(t *testing.T) {
 
 	sc.run(now)
 
-	entries, _ := os.ReadDir(outDir)
+	entries := readJSONLEntries(t, outDir)
 	if len(entries) != 1 {
 		t.Errorf("got %d output files, want 1", len(entries))
 	}
@@ -622,7 +633,7 @@ func TestIP_InitialGeoFromMMDB(t *testing.T) {
 	sc.run(now)
 
 	// All generated locations must be within 1 km of the MMDB coordinates.
-	entries, _ := os.ReadDir(outDir)
+	entries := readJSONLEntries(t, outDir)
 	if len(entries) != 1 {
 		t.Fatalf("expected 1 output file, got %d", len(entries))
 	}
@@ -669,7 +680,7 @@ func TestIP_ConsecutiveLocationsWithin2km(t *testing.T) {
 	sc.run(now)
 	sc.run(now.Add(5 * time.Minute))
 
-	entries, _ := os.ReadDir(outDir)
+	entries := readJSONLEntries(t, outDir)
 	if len(entries) != 2 {
 		t.Fatalf("expected 2 output files, got %d", len(entries))
 	}
