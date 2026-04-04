@@ -461,7 +461,7 @@ func TestScheduler_GenerateForTask_OutDirError(t *testing.T) {
 	blockingFile := t.TempDir() + "/file"
 	os.WriteFile(blockingFile, []byte("x"), 0644)
 	sc := NewScheduler(newTestStore(t), blockingFile+"/subdir", 5*time.Minute, nil, nil)
-	err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
+	_, err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
 	if err == nil {
 		t.Error("expected error when outDir cannot be created")
 	}
@@ -472,7 +472,7 @@ func TestScheduler_GenerateForTask_FileCreateError(t *testing.T) {
 	os.Chmod(outDir, 0444)
 	defer os.Chmod(outDir, 0755)
 	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil)
-	err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
+	_, err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
 	if err == nil {
 		t.Error("expected error when output file cannot be created")
 	}
@@ -493,7 +493,7 @@ func TestScheduler_GenerateForTask(t *testing.T) {
 		Count:         3,
 	}
 
-	if err := sc.generateForTask(task, now); err != nil {
+	if _, err := sc.generateForTask(task, now); err != nil {
 		t.Fatalf("generateForTask: %v", err)
 	}
 

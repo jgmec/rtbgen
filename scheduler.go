@@ -61,16 +61,26 @@ func (sc *Scheduler) run(now time.Time) {
 		return
 	}
 	log.Printf("scheduler tick: %d active task(s)", len(tasks))
+	var generated []string
 	for _, task := range tasks {
-		if err := sc.generateForTask(task, now); err != nil {
+		filename, err := sc.generateForTask(task, now)
+		if err != nil {
 			log.Printf("task %s: generation error: %v", task.CorrelationID, err)
+			continue
+		}
+		generated = append(generated, filename)
+	}
+	if len(generated) > 0 {
+		zipPath := filepath.Join(sc.outDir, fmt.Sprintf("output_%d.zip", now.Unix()))
+		if err := createZip(zipPath, generated...); err != nil {
+			log.Printf("tick zip error: %v", err)
 		}
 	}
 }
 
-func (sc *Scheduler) generateForTask(task *Task, now time.Time) error {
+func (sc *Scheduler) generateForTask(task *Task, now time.Time) (string, error) {
 	if err := os.MkdirAll(sc.outDir, 0755); err != nil {
-		return fmt.Errorf("create output dir: %w", err)
+		return "", fmt.Errorf("create output dir: %w", err)
 	}
 
 	filename := filepath.Join(sc.outDir,
@@ -78,7 +88,7 @@ func (sc *Scheduler) generateForTask(task *Task, now time.Time) error {
 
 	f, err := os.Create(filename)
 	if err != nil {
-		return fmt.Errorf("create file: %w", err)
+		return "", fmt.Errorf("create file: %w", err)
 	}
 	defer f.Close()
 
@@ -86,7 +96,7 @@ func (sc *Scheduler) generateForTask(task *Task, now time.Time) error {
 
 	if task.CriteriaType == CriteriaIP || task.CriteriaType == CriteriaBBox {
 		if err := sc.generateForDeviceTask(task, w, now); err != nil {
-			return err
+			return "", err
 		}
 	} else {
 		geo := task.LastGeo
@@ -99,7 +109,7 @@ func (sc *Scheduler) generateForTask(task *Task, now time.Time) error {
 			}
 			line, err := json.Marshal(req)
 			if err != nil {
-				return fmt.Errorf("marshal request: %w", err)
+				return "", fmt.Errorf("marshal request: %w", err)
 			}
 			w.Write(line)
 			w.WriteByte('\n')
@@ -118,99 +128,53 @@ func (sc *Scheduler) generateForTask(task *Task, now time.Time) error {
 	}
 
 	if err := w.Flush(); err != nil {
-		return fmt.Errorf("flush: %w", err)
+		return "", fmt.Errorf("flush: %w", err)
 	}
 
 	log.Printf("task %s: wrote %d requests -> %s", task.CorrelationID, task.Count, filename)
-
-	zipPath := filepath.Join(sc.outDir, "output.zip")
-	if err := appendToZip(zipPath, filename); err != nil {
-		log.Printf("task %s: zip error: %v", task.CorrelationID, err)
-	}
-
-	return nil
+	return filename, nil
 }
 
-// appendToZip adds the file at filePath to the zip archive at zipPath.
-// If the archive does not exist it is created. Existing entries are preserved
-// by reading the current archive and rewriting via a temp file.
-func appendToZip(zipPath, filePath string) error {
-	tmpPath := zipPath + ".tmp"
-
-	out, err := os.Create(tmpPath)
+// createZip creates a new zip archive at zipPath containing all provided files.
+func createZip(zipPath string, filePaths ...string) error {
+	out, err := os.Create(zipPath)
 	if err != nil {
-		return fmt.Errorf("create temp zip: %w", err)
+		return fmt.Errorf("create zip: %w", err)
 	}
 
 	zw := zip.NewWriter(out)
 
-	// Copy existing entries if the archive already exists.
-	if existing, err := zip.OpenReader(zipPath); err == nil {
-		for _, entry := range existing.File {
-			w, err := zw.CreateHeader(&entry.FileHeader)
-			if err != nil {
-				existing.Close()
-				zw.Close()
-				out.Close()
-				os.Remove(tmpPath)
-				return fmt.Errorf("copy zip entry header: %w", err)
-			}
-			rc, err := entry.Open()
-			if err != nil {
-				existing.Close()
-				zw.Close()
-				out.Close()
-				os.Remove(tmpPath)
-				return fmt.Errorf("open zip entry: %w", err)
-			}
-			_, copyErr := io.Copy(w, rc)
-			rc.Close()
-			if copyErr != nil {
-				existing.Close()
-				zw.Close()
-				out.Close()
-				os.Remove(tmpPath)
-				return fmt.Errorf("copy zip entry data: %w", copyErr)
-			}
+	for _, filePath := range filePaths {
+		w, err := zw.Create(filepath.Base(filePath))
+		if err != nil {
+			zw.Close()
+			out.Close()
+			os.Remove(zipPath)
+			return fmt.Errorf("create zip entry: %w", err)
 		}
-		existing.Close()
-	}
-
-	// Add the new file.
-	w, err := zw.Create(filepath.Base(filePath))
-	if err != nil {
-		zw.Close()
-		out.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("create zip entry: %w", err)
-	}
-	src, err := os.Open(filePath)
-	if err != nil {
-		zw.Close()
-		out.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("open source file: %w", err)
-	}
-	_, copyErr := io.Copy(w, src)
-	src.Close()
-	if copyErr != nil {
-		zw.Close()
-		out.Close()
-		os.Remove(tmpPath)
-		return fmt.Errorf("write zip entry: %w", copyErr)
+		src, err := os.Open(filePath)
+		if err != nil {
+			zw.Close()
+			out.Close()
+			os.Remove(zipPath)
+			return fmt.Errorf("open source file: %w", err)
+		}
+		_, copyErr := io.Copy(w, src)
+		src.Close()
+		if copyErr != nil {
+			zw.Close()
+			out.Close()
+			os.Remove(zipPath)
+			return fmt.Errorf("write zip entry: %w", copyErr)
+		}
 	}
 
 	if err := zw.Close(); err != nil {
 		out.Close()
-		os.Remove(tmpPath)
+		os.Remove(zipPath)
 		return fmt.Errorf("close zip writer: %w", err)
 	}
-	if err := out.Close(); err != nil {
-		os.Remove(tmpPath)
-		return fmt.Errorf("close temp zip: %w", err)
-	}
-
-	return os.Rename(tmpPath, zipPath)
+	return out.Close()
 }
 
 // generateForDeviceTask generates count requests across a persistent device pool for IP and bbox tasks.

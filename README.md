@@ -249,13 +249,11 @@ Every `-scheduler-interval`, the scheduler finds all `active` tasks and generate
 {out-dir}/task_{correlation_id}_{unix_timestamp}.jsonl
 ```
 
-After each file is written it is also appended to a single cumulative archive:
+After all tasks in a tick have been processed, a single zip archive is created for that tick containing all JSONL files generated in it:
 
 ```
-{out-dir}/output.zip
+{out-dir}/output_{unix_timestamp}.zip
 ```
-
-The zip is created on the first tick and grows with every subsequent tick across all tasks. Each entry inside the archive is the JSONL file from that tick.
 
 Each request includes an `ext` object:
 
