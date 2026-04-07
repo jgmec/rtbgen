@@ -26,6 +26,8 @@ func main() {
 	schedulerInterval := flag.Duration("scheduler-interval", 5*time.Minute, "How often the scheduler generates requests for active tasks (server mode only)")
 	mmdbPath := flag.String("mmdb", "", "Path to MaxMind GeoIP2 City MMDB file (optional)")
 	nominatimURL := flag.String("nominatim-url", "https://nominatim.openstreetmap.org", "Base URL for Nominatim reverse geocoding (optional)")
+	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file (enables HTTPS)")
+	tlsKey := flag.String("tls-key", "", "Path to TLS private key file (enables HTTPS)")
 
 	// CLI generation flags
 	requestType := flag.String("type", "random", "Request type: site, app, or random")
@@ -40,7 +42,7 @@ func main() {
 	flag.Parse()
 
 	if *serverMode {
-		runServer(*port, *tasksFile, *outDir, *schedulerInterval, *mmdbPath, *nominatimURL)
+		runServer(*port, *tasksFile, *outDir, *schedulerInterval, *mmdbPath, *nominatimURL, *tlsCert, *tlsKey)
 		return
 	}
 
@@ -77,7 +79,7 @@ func main() {
 	}
 }
 
-func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, mmdbPath, nominatimURL string) {
+func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, mmdbPath, nominatimURL, tlsCert, tlsKey string) {
 	store, err := NewTaskStore(tasksFile)
 	if err != nil {
 		log.Fatalf("load task store: %v", err)
@@ -104,9 +106,17 @@ func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, 
 
 	srv := NewServer(store, mmdb)
 	addr := ":" + port
-	log.Printf("HTTP server listening on %s", addr)
-	if err := http.ListenAndServe(addr, srv.Handler()); err != nil {
-		log.Fatalf("server: %v", err)
+	handler := srv.Handler()
+	if tlsCert != "" && tlsKey != "" {
+		log.Printf("HTTPS server listening on %s", addr)
+		if err := http.ListenAndServeTLS(addr, tlsCert, tlsKey, handler); err != nil {
+			log.Fatalf("server: %v", err)
+		}
+	} else {
+		log.Printf("HTTP server listening on %s", addr)
+		if err := http.ListenAndServe(addr, handler); err != nil {
+			log.Fatalf("server: %v", err)
+		}
 	}
 }
 

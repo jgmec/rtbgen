@@ -6,6 +6,8 @@ services:
       - "${PORT}:8080"
     volumes:
       - ./data:/app/data
+      - ${TLS_CERT_PATH}:/app/certs/server.crt:ro
+      - ${TLS_KEY_PATH}:/app/certs/server.key:ro
     command:
       - -port=8080
       - -tasks-file=${TASKS_FILE}
@@ -13,5 +15,7 @@ services:
       - -scheduler-interval=${SCHEDULER_INTERVAL}
       - -mmdb=${MMDB_PATH}
       - -nominatim-url=${NOMINATIM_URL}
+      - -tls-cert=/app/certs/server.crt
+      - -tls-key=/app/certs/server.key
       - -bbox=${BBOX_MAX_LAT},${BBOX_MAX_LON},${BBOX_MIN_LAT},${BBOX_MIN_LON}
     restart: unless-stopped

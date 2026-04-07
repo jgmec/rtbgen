@@ -14,6 +14,8 @@ A Go CLI tool and HTTP service for generating random [OpenRTB 2.5](https://www.i
 - IP-based geo lookup via MaxMind GeoIP2 MMDB
 - Geo anchor persisted per task — location stays consistent across scheduler ticks and server restarts
 - Generated locations scattered within 1 km radius of the anchor (IP/IFA) or randomly within the polygon (bbox)
+- Reverse geocoding via Nominatim — enriches all generated geo points with city, country, region, and postcode
+- HTTPS support with TLS certificates
 - Docker and Docker Compose support
 
 ## Installation
@@ -96,9 +98,16 @@ Start the server:
 | `-scheduler-interval` | `5m` | How often active tasks generate requests |
 | `-mmdb` | | Path to MaxMind GeoIP2 City MMDB file (optional) |
 | `-nominatim-url` | `https://nominatim.openstreetmap.org` | Base URL for Nominatim reverse geocoding (optional) |
+| `-tls-cert` | | Path to TLS certificate file — enables HTTPS when set together with `-tls-key` |
+| `-tls-key` | | Path to TLS private key file — enables HTTPS when set together with `-tls-cert` |
 
 ```bash
+# Plain HTTP
 ./rtb-generator -server -port=8080 -scheduler-interval=1m -out-dir=./output -mmdb=./GeoLite2-City.mmdb
+
+# HTTPS with self-signed certificate
+./generate-certs.sh
+./rtb-generator -server -port=8443 -tls-cert=./certs/server.crt -tls-key=./certs/server.key
 ```
 
 ### Reverse geocoding
@@ -111,9 +120,21 @@ If the lookup fails or the URL is not configured, coordinates are written as-is 
 
 To use a self-hosted Nominatim instance, set `-nominatim-url` to its base URL.
 
+### TLS / HTTPS
+
+When both `-tls-cert` and `-tls-key` are provided the server listens with HTTPS. If either flag is absent the server falls back to plain HTTP.
+
+Generate a self-signed certificate for local use:
+
+```bash
+./generate-certs.sh   # writes certs/server.crt and certs/server.key
+```
+
+The script produces a 4096-bit RSA certificate valid for 10 years with `subjectAltName` covering `localhost` and `127.0.0.1`. For production, replace with a certificate from a trusted CA.
+
 ### MaxMind MMDB
 
-When `-mmdb` is provided, IP-criteria tasks look up the IP address coordinates from the MMDB on the first scheduler tick. The resolved coordinates become the starting point (`last_geo`) for location generation.
+When `-mmdb` is provided, IP-criteria tasks look up the IP address coordinates from the MMDB at task creation time. The resolved coordinates become the starting point (`last_geo`) for location generation.
 
 If the MMDB is not configured, or the IP is not found (e.g. private/reserved addresses), the service falls back to a random city location.
 
@@ -360,15 +381,23 @@ OUT_DIR=/app/data/output
 SCHEDULER_INTERVAL=5m
 MMDB_PATH=/app/data/GeoLite2-City.mmdb
 NOMINATIM_URL=https://nominatim.openstreetmap.org
+TLS_CERT_PATH=./certs/server.crt
+TLS_KEY_PATH=./certs/server.key
 BBOX_MAX_LAT=
 BBOX_MAX_LON=
 BBOX_MIN_LAT=
 BBOX_MIN_LON=
 ```
 
-Place the MMDB file in `./data/` and set `MMDB_PATH` accordingly. If `MMDB_PATH` is empty, MMDB lookup is disabled and IP tasks fall back to a random city.
+Before starting for the first time, generate a self-signed certificate:
 
-The `./data/` directory is mounted into the container at `/app/data` and holds tasks, output JSONL files, and optionally the MMDB file.
+```bash
+./generate-certs.sh
+```
+
+The `./certs/` directory is bind-mounted into the container as read-only. The `./data/` directory is mounted at `/app/data` and holds tasks, output JSONL files, and optionally the MMDB file.
+
+If `MMDB_PATH` is empty, MMDB lookup is disabled and IP tasks fall back to a random city. If `TLS_CERT_PATH` or `TLS_KEY_PATH` are empty, the server runs over plain HTTP.
 
 ## Running tests
 
