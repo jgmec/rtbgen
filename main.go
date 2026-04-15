@@ -28,6 +28,11 @@ func main() {
 	nominatimURL := flag.String("nominatim-url", "https://nominatim.openstreetmap.org", "Base URL for Nominatim reverse geocoding (optional)")
 	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file (enables HTTPS)")
 	tlsKey := flag.String("tls-key", "", "Path to TLS private key file (enables HTTPS)")
+	sftpHost := flag.String("sftp-host", "", "Default SFTP server hostname")
+	sftpPort := flag.Int("sftp-port", 22, "Default SFTP server port")
+	sftpUser := flag.String("sftp-user", "", "Default SFTP username")
+	sftpPassword := flag.String("sftp-password", "", "Default SFTP password")
+	sftpDir := flag.String("sftp-dir", "/", "Default SFTP remote upload directory")
 
 	// CLI generation flags
 	requestType := flag.String("type", "random", "Request type: site, app, or random")
@@ -42,7 +47,17 @@ func main() {
 	flag.Parse()
 
 	if *serverMode {
-		runServer(*port, *tasksFile, *outDir, *schedulerInterval, *mmdbPath, *nominatimURL, *tlsCert, *tlsKey)
+		var defaultSFTP *SFTPConfig
+		if *sftpHost != "" {
+			defaultSFTP = &SFTPConfig{
+				Host:     *sftpHost,
+				Port:     *sftpPort,
+				User:     *sftpUser,
+				Password: *sftpPassword,
+				Dir:      *sftpDir,
+			}
+		}
+		runServer(*port, *tasksFile, *outDir, *schedulerInterval, *mmdbPath, *nominatimURL, *tlsCert, *tlsKey, defaultSFTP)
 		return
 	}
 
@@ -79,7 +94,7 @@ func main() {
 	}
 }
 
-func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, mmdbPath, nominatimURL, tlsCert, tlsKey string) {
+func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, mmdbPath, nominatimURL, tlsCert, tlsKey string, defaultSFTP *SFTPConfig) {
 	store, err := NewTaskStore(tasksFile)
 	if err != nil {
 		log.Fatalf("load task store: %v", err)
@@ -101,7 +116,7 @@ func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, 
 		log.Printf("reverse geocoding enabled: %s", nominatimURL)
 	}
 
-	scheduler := NewScheduler(store, outDir, schedulerInterval, mmdb, geocoder)
+	scheduler := NewScheduler(store, outDir, schedulerInterval, mmdb, geocoder, defaultSFTP)
 	go scheduler.Start()
 
 	srv := NewServer(store, mmdb)

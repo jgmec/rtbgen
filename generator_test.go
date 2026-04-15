@@ -251,7 +251,7 @@ func TestIFA_ConsistentBaseGeoAcrossSchedulerRuns(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
 	srv := NewServer(store, nil)
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil)
 
 	now := time.Now()
 	task := &Task{
@@ -432,7 +432,7 @@ func TestGenerateImpression_Random(t *testing.T) {
 }
 
 func TestScheduler_StartStop(t *testing.T) {
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 100*time.Millisecond, nil, nil)
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 100*time.Millisecond, nil, nil, nil)
 	done := make(chan struct{})
 	go func() {
 		sc.Start()
@@ -448,7 +448,7 @@ func TestScheduler_StartStop(t *testing.T) {
 
 func TestScheduler_RunNoActiveTasks(t *testing.T) {
 	outDir := t.TempDir()
-	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil)
+	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil, nil)
 	sc.run(time.Now())
 	entries := readJSONLEntries(t, outDir)
 	if len(entries) != 0 {
@@ -460,7 +460,7 @@ func TestScheduler_GenerateForTask_OutDirError(t *testing.T) {
 	// Use a file as the output dir so MkdirAll fails.
 	blockingFile := t.TempDir() + "/file"
 	os.WriteFile(blockingFile, []byte("x"), 0644)
-	sc := NewScheduler(newTestStore(t), blockingFile+"/subdir", 5*time.Minute, nil, nil)
+	sc := NewScheduler(newTestStore(t), blockingFile+"/subdir", 5*time.Minute, nil, nil, nil)
 	_, err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
 	if err == nil {
 		t.Error("expected error when outDir cannot be created")
@@ -471,7 +471,7 @@ func TestScheduler_GenerateForTask_FileCreateError(t *testing.T) {
 	outDir := t.TempDir()
 	os.Chmod(outDir, 0444)
 	defer os.Chmod(outDir, 0755)
-	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil)
+	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil, nil)
 	_, err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
 	if err == nil {
 		t.Error("expected error when output file cannot be created")
@@ -481,7 +481,7 @@ func TestScheduler_GenerateForTask_FileCreateError(t *testing.T) {
 func TestScheduler_GenerateForTask(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil)
 
 	now := time.Now()
 	task := &Task{
@@ -506,7 +506,7 @@ func TestScheduler_GenerateForTask(t *testing.T) {
 func TestScheduler_Run(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil)
 
 	now := time.Now()
 	active := &Task{
@@ -608,7 +608,7 @@ func TestIP_InitialGeoFromMMDB(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
 	srv := NewServer(store, db)
-	sc := NewScheduler(store, outDir, 5*time.Minute, db, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, db, nil, nil)
 
 	// Look up expected coordinates directly from the MMDB.
 	record, err := db.City(net.ParseIP("8.8.8.8"))
@@ -661,7 +661,7 @@ func TestIP_ConsecutiveLocationsWithin2km(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
 	srv := NewServer(store, nil)
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil)
 
 	const count = 20
 	now := time.Now()
@@ -759,5 +759,91 @@ func TestIP_ConsecutiveLocationsWithin2km(t *testing.T) {
 		if d := geoDistanceKm(last1.Lat, last1.Lon, first2.Lat, first2.Lon); d > 1.0 {
 			t.Errorf("IFA %s: tick1-last→tick2-first distance %.3f km, want <= 1 km", ifa, d)
 		}
+	}
+}
+
+// ---- createZip tests ----
+
+func TestCreateZip_Success(t *testing.T) {
+	dir := t.TempDir()
+	f1 := dir + "/a.jsonl"
+	f2 := dir + "/b.jsonl"
+	os.WriteFile(f1, []byte(`{"id":"1"}`), 0644)
+	os.WriteFile(f2, []byte(`{"id":"2"}`), 0644)
+
+	zipPath := dir + "/out.zip"
+	if err := createZip(zipPath, f1, f2); err != nil {
+		t.Fatalf("createZip: %v", err)
+	}
+	info, err := os.Stat(zipPath)
+	if err != nil {
+		t.Fatalf("zip not created: %v", err)
+	}
+	if info.Size() == 0 {
+		t.Error("zip file is empty")
+	}
+}
+
+func TestCreateZip_MissingSourceFile(t *testing.T) {
+	dir := t.TempDir()
+	zipPath := dir + "/out.zip"
+	err := createZip(zipPath, "/nonexistent/file.jsonl")
+	if err == nil {
+		t.Error("expected error for missing source file")
+	}
+	// Partial zip should be cleaned up.
+	if _, statErr := os.Stat(zipPath); statErr == nil {
+		t.Error("partial zip should have been deleted on error")
+	}
+}
+
+func TestCreateZip_UnwritableDestination(t *testing.T) {
+	dir := t.TempDir()
+	f := dir + "/data.jsonl"
+	os.WriteFile(f, []byte("x"), 0644)
+	err := createZip("/nonexistent/dir/out.zip", f)
+	if err == nil {
+		t.Error("expected error for unwritable destination")
+	}
+}
+
+// ---- uploadZip tests ----
+
+func TestUploadZip_NoSFTPConfigured_FilesKeptLocally(t *testing.T) {
+	dir := t.TempDir()
+	jsonlPath := dir + "/task_x_1.jsonl"
+	zipPath := dir + "/out.zip"
+	os.WriteFile(jsonlPath, []byte("{\"id\":\"1\"}\n"), 0644)
+	os.WriteFile(zipPath, []byte("zip"), 0644)
+
+	sc := NewScheduler(newTestStore(t), dir, 5*time.Minute, nil, nil, nil)
+	sc.uploadZip(zipPath, []string{jsonlPath}, []*Task{})
+
+	if _, err := os.Stat(zipPath); err != nil {
+		t.Error("zip should not be deleted when no SFTP is configured")
+	}
+	if _, err := os.Stat(jsonlPath); err != nil {
+		t.Error("jsonl should not be deleted when no SFTP is configured")
+	}
+}
+
+func TestUploadZip_SFTPFails_FilesKeptLocally(t *testing.T) {
+	dir := t.TempDir()
+	jsonlPath := dir + "/task_x_1.jsonl"
+	zipPath := dir + "/out.zip"
+	os.WriteFile(jsonlPath, []byte("{\"id\":\"1\"}\n"), 0644)
+	os.WriteFile(zipPath, []byte("zip"), 0644)
+
+	// Port 1 will always refuse connections.
+	badSFTP := &SFTPConfig{Host: "127.0.0.1", Port: 1, User: "u", Password: "p"}
+	sc := NewScheduler(newTestStore(t), dir, 5*time.Minute, nil, nil, badSFTP)
+	task := &Task{CorrelationID: "x"}
+	sc.uploadZip(zipPath, []string{jsonlPath}, []*Task{task})
+
+	if _, err := os.Stat(zipPath); err != nil {
+		t.Error("zip should be kept after failed upload")
+	}
+	if _, err := os.Stat(jsonlPath); err != nil {
+		t.Error("jsonl should be kept after failed upload")
 	}
 }

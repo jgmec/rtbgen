@@ -36,6 +36,7 @@ type CreateTaskRequest struct {
 	IPAddress     string           `json:"ip_address,omitempty"`
 	IFA           string           `json:"ifa,omitempty"`
 	Geometry      *GeoJSONGeometry `json:"geometry,omitempty"`
+	SFTP          *SFTPConfig      `json:"sftp,omitempty"`
 	Count         int              `json:"count"`
 }
 
@@ -57,6 +58,7 @@ func (s *Server) createTask(w http.ResponseWriter, r *http.Request) {
 		IPAddress:     req.IPAddress,
 		IFA:           req.IFA,
 		Geometry:      req.Geometry,
+		SFTP:          req.SFTP,
 		Count:         req.Count,
 		CreatedAt:     time.Now(),
 		LastGeo:       s.resolveInitialGeo(req.CriteriaType, req.IPAddress),

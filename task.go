@@ -87,6 +87,7 @@ type Task struct {
 	Geometry      *GeoJSONGeometry `json:"geometry,omitempty"`
 	LastGeo       *Geo             `json:"last_geo,omitempty"`
 	Devices       map[string]*Geo  `json:"devices,omitempty"`
+	SFTP          *SFTPConfig      `json:"sftp,omitempty"`
 	Count         int              `json:"count"`
 	Status        TaskStatus       `json:"status"`
 	CreatedAt     time.Time        `json:"created_at"`

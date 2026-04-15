@@ -15,23 +15,30 @@ import (
 	"github.com/oschwald/geoip2-golang"
 )
 
-type Scheduler struct {
-	store    *TaskStore
-	outDir   string
-	interval time.Duration
-	mmdb     *geoip2.Reader
-	geocoder *ReverseGeocoder
-	stop     chan struct{}
+// sftpKey returns a deduplication key for an SFTPConfig.
+func sftpKey(c *SFTPConfig) string {
+	return fmt.Sprintf("%s:%d:%s:%s", c.Host, c.Port, c.User, c.remoteDir())
 }
 
-func NewScheduler(store *TaskStore, outDir string, interval time.Duration, mmdb *geoip2.Reader, geocoder *ReverseGeocoder) *Scheduler {
+type Scheduler struct {
+	store       *TaskStore
+	outDir      string
+	interval    time.Duration
+	mmdb        *geoip2.Reader
+	geocoder    *ReverseGeocoder
+	defaultSFTP *SFTPConfig
+	stop        chan struct{}
+}
+
+func NewScheduler(store *TaskStore, outDir string, interval time.Duration, mmdb *geoip2.Reader, geocoder *ReverseGeocoder, defaultSFTP *SFTPConfig) *Scheduler {
 	return &Scheduler{
-		store:    store,
-		outDir:   outDir,
-		interval: interval,
-		mmdb:     mmdb,
-		geocoder: geocoder,
-		stop:     make(chan struct{}),
+		store:       store,
+		outDir:      outDir,
+		interval:    interval,
+		mmdb:        mmdb,
+		geocoder:    geocoder,
+		defaultSFTP: defaultSFTP,
+		stop:        make(chan struct{}),
 	}
 }
 
@@ -74,6 +81,45 @@ func (sc *Scheduler) run(now time.Time) {
 		zipPath := filepath.Join(sc.outDir, fmt.Sprintf("output_%d.zip", now.Unix()))
 		if err := createZip(zipPath, generated...); err != nil {
 			log.Printf("tick zip error: %v", err)
+			return
+		}
+		sc.uploadZip(zipPath, generated, tasks)
+	}
+}
+
+// uploadZip uploads zipPath to all unique SFTP targets from the tick's tasks (falling back to the
+// global default when a task has no SFTP config). Deletes the local zip and JSONL files after all
+// uploads succeed.
+func (sc *Scheduler) uploadZip(zipPath string, jsonlPaths []string, tasks []*Task) {
+	// Collect unique SFTP targets.
+	seen := make(map[string]*SFTPConfig)
+	for _, t := range tasks {
+		cfg := t.SFTP
+		if cfg == nil {
+			cfg = sc.defaultSFTP
+		}
+		if cfg != nil && cfg.Host != "" {
+			seen[sftpKey(cfg)] = cfg
+		}
+	}
+	if len(seen) == 0 {
+		return // no SFTP configured — keep zip locally
+	}
+
+	allOK := true
+	for _, cfg := range seen {
+		if err := uploadSFTP(cfg, zipPath); err != nil {
+			log.Printf("sftp upload to %s: %v", cfg.addr(), err)
+			allOK = false
+		} else {
+			log.Printf("sftp upload to %s: ok (%s)", cfg.addr(), filepath.Base(zipPath))
+		}
+	}
+	if allOK {
+		for _, p := range append(jsonlPaths, zipPath) {
+			if err := os.Remove(p); err != nil {
+				log.Printf("delete local file %s: %v", p, err)
+			}
 		}
 	}
 }

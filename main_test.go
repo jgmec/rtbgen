@@ -1,9 +1,77 @@
 package main
 
 import (
+	"bytes"
 	"encoding/json"
+	"fmt"
+	"io"
+	"os"
 	"testing"
 )
+
+func captureStdout(f func()) string {
+	old := os.Stdout
+	r, w, _ := os.Pipe()
+	os.Stdout = w
+	f()
+	w.Close()
+	os.Stdout = old
+	var buf bytes.Buffer
+	io.Copy(&buf, r)
+	return buf.String()
+}
+
+func TestPrintJSON_Pretty(t *testing.T) {
+	prettyPrint = true
+	out := captureStdout(func() { printJSON(map[string]string{"key": "val"}) })
+	if !json.Valid([]byte(out)) {
+		t.Errorf("output is not valid JSON: %s", out)
+	}
+	// Pretty output contains newlines beyond a single-line compact form.
+	compact := fmt.Sprintf(`{"key":"val"}`) + "\n"
+	if out == compact {
+		t.Error("expected indented output in pretty mode")
+	}
+}
+
+func TestPrintJSON_Compact(t *testing.T) {
+	prettyPrint = false
+	out := captureStdout(func() { printJSON(map[string]string{"key": "val"}) })
+	prettyPrint = true
+	if !json.Valid([]byte(out)) {
+		t.Errorf("output is not valid JSON: %s", out)
+	}
+}
+
+func TestShowExamples_NoError(t *testing.T) {
+	prettyPrint = true
+	out := captureStdout(showExamples)
+	if len(out) == 0 {
+		t.Error("expected non-empty output from showExamples")
+	}
+}
+
+func TestParseBoundingBox_Valid(t *testing.T) {
+	bb, err := parseBoundingBox("40.9,-73.7,40.5,-74.1")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if bb.MaxLat != 40.9 || bb.MaxLon != -73.7 || bb.MinLat != 40.5 || bb.MinLon != -74.1 {
+		t.Errorf("unexpected bbox: %+v", bb)
+	}
+}
+
+func TestParseBoundingBox_WrongFieldCount(t *testing.T) {
+	if _, err := parseBoundingBox("40.9,-73.7,40.5"); err == nil {
+		t.Error("expected error for wrong field count")
+	}
+}
+
+func TestParseBoundingBox_InvalidFloat(t *testing.T) {
+	if _, err := parseBoundingBox("40.9,-73.7,40.5,notafloat"); err == nil {
+		t.Error("expected error for invalid float")
+	}
+}
 
 func TestGenerateRandomBidRequest(t *testing.T) {
 	tests := []struct {

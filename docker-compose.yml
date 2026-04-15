@@ -17,5 +17,12 @@ services:
       - -nominatim-url=${NOMINATIM_URL}
       - -tls-cert=/app/certs/server.crt
       - -tls-key=/app/certs/server.key
+      - -sftp-host=${SFTP_HOST}
+      - -sftp-port=${SFTP_PORT}
+      - -sftp-user=${SFTP_USER}
+      - -sftp-password=${SFTP_PASSWORD}
+      - -sftp-dir=${SFTP_DIR}
       - -bbox=${BBOX_MAX_LAT},${BBOX_MAX_LON},${BBOX_MIN_LAT},${BBOX_MIN_LON}
     restart: unless-stopped
+    extra_hosts:
+      - "host.docker.internal:host-gateway"

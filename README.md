@@ -12,10 +12,11 @@ A Go CLI tool and HTTP service for generating random [OpenRTB 2.5](https://www.i
 - Background scheduler generating JSONL output for active tasks
 - Three geo criteria modes: IP address, IFA, or GeoJSON bounding box
 - IP-based geo lookup via MaxMind GeoIP2 MMDB
-- Geo anchor persisted per task — location stays consistent across scheduler ticks and server restarts
-- Generated locations scattered within 1 km radius of the anchor (IP/IFA) or randomly within the polygon (bbox)
+- Per-device geo pools for `ip` and `bbox` tasks — each device walks independently across ticks
+- Single walking location for `ifa` tasks — path persisted across ticks and server restarts
 - Reverse geocoding via Nominatim — enriches all generated geo points with city, country, region, and postcode
 - HTTPS support with TLS certificates
+- SFTP upload of tick output — per-task or global default; local files deleted after successful upload
 - Docker and Docker Compose support
 
 ## Installation
@@ -26,7 +27,7 @@ cd rtbgen
 go build -o rtb-generator .
 ```
 
-Requires Go 1.22+.
+Requires Go 1.23+.
 
 ## CLI Usage
 
@@ -100,6 +101,11 @@ Start the server:
 | `-nominatim-url` | `https://nominatim.openstreetmap.org` | Base URL for Nominatim reverse geocoding (optional) |
 | `-tls-cert` | | Path to TLS certificate file — enables HTTPS when set together with `-tls-key` |
 | `-tls-key` | | Path to TLS private key file — enables HTTPS when set together with `-tls-cert` |
+| `-sftp-host` | | Default SFTP server hostname — enables upload when set |
+| `-sftp-port` | `22` | Default SFTP server port |
+| `-sftp-user` | | Default SFTP username |
+| `-sftp-password` | | Default SFTP password |
+| `-sftp-dir` | `/` | Default SFTP remote upload directory |
 
 ```bash
 # Plain HTTP
@@ -131,6 +137,40 @@ Generate a self-signed certificate for local use:
 ```
 
 The script produces a 4096-bit RSA certificate valid for 10 years with `subjectAltName` covering `localhost` and `127.0.0.1`. For production, replace with a certificate from a trusted CA.
+
+### SFTP upload
+
+After each scheduler tick, the zip archive is uploaded to one or more SFTP servers and then the local zip and all JSONL files for that tick are deleted. If any upload fails, all local files are kept.
+
+**Global default** — configured via flags or env variables, applies to every task that does not specify its own SFTP server.
+
+**Per-task override** — supply an `sftp` object in the create-task request body. That task's output is uploaded to its own server instead of (not in addition to) the global default.
+
+If the same host/port/user/dir combination appears in multiple tasks and as the global default, it is deduplicated and uploaded to once.
+
+**Example: task with a dedicated SFTP target**
+
+```bash
+curl -k -X POST https://localhost:8081/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "correlation_id": "campaign-sftp-001",
+    "start_time": "2026-04-15T08:00:00Z",
+    "end_time":   "2026-04-15T20:00:00Z",
+    "criteria_type": "ip",
+    "ip_address": "8.8.8.8",
+    "count": 100,
+    "sftp": {
+      "host": "sftp.example.com",
+      "port": 22,
+      "user": "uploader",
+      "password": "secret",
+      "dir": "/uploads/campaign-sftp-001"
+    }
+  }'
+```
+
+If no SFTP is configured (neither global nor per-task), the zip is kept locally in `-out-dir`.
 
 ### MaxMind MMDB
 
@@ -172,21 +212,23 @@ POST /tasks
 
 | Value | Required field | Geo behaviour |
 |---|---|---|
-| `ip` | `ip_address` | Coordinates from MaxMind MMDB lookup; requests within 1 km radius |
-| `ifa` | `ifa` | Random city anchor; requests within 1 km radius |
-| `bbox` | `geometry` | GeoJSON `Polygon` (coordinates as `[longitude, latitude]`); requests randomly distributed inside the polygon |
+| `ip` | `ip_address` | Coordinates from MaxMind MMDB lookup; persistent device pool walking within 1 km |
+| `ifa` | `ifa` | Random city anchor; single location walking up to 2 km per step |
+| `bbox` | `geometry` | GeoJSON `Polygon` (coordinates as `[longitude, latitude]`); persistent device pool constrained within the polygon |
 
 Returns `201 Created` with the created task object.
+
+All examples below use `https://localhost:8081` (the default Docker port with TLS). Add `-k` to skip certificate verification for self-signed certs, or `--cacert certs/server.crt` to trust it explicitly.
 
 **Example: IP criteria**
 
 ```bash
-curl -X POST http://localhost:8080/tasks \
+curl -k -X POST https://localhost:8081/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "correlation_id": "campaign-ip-001",
-    "start_time": "2026-03-24T10:00:00Z",
-    "end_time":   "2026-03-24T18:00:00Z",
+    "start_time": "2026-04-15T08:00:00Z",
+    "end_time":   "2026-04-15T20:00:00Z",
     "criteria_type": "ip",
     "ip_address": "8.8.8.8",
     "count": 50
@@ -196,12 +238,12 @@ curl -X POST http://localhost:8080/tasks \
 **Example: IFA criteria**
 
 ```bash
-curl -X POST http://localhost:8080/tasks \
+curl -k -X POST https://localhost:8081/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "correlation_id": "campaign-ifa-001",
-    "start_time": "2026-03-24T10:00:00Z",
-    "end_time":   "2026-03-24T18:00:00Z",
+    "start_time": "2026-04-15T08:00:00Z",
+    "end_time":   "2026-04-15T20:00:00Z",
     "criteria_type": "ifa",
     "ifa": "38400000-8cf0-11bd-b23e-10b96e40000d",
     "count": 50
@@ -211,12 +253,12 @@ curl -X POST http://localhost:8080/tasks \
 **Example: GeoJSON bounding box criteria**
 
 ```bash
-curl -X POST http://localhost:8080/tasks \
+curl -k -X POST https://localhost:8081/tasks \
   -H "Content-Type: application/json" \
   -d '{
     "correlation_id": "campaign-geo-001",
-    "start_time": "2026-03-24T10:00:00Z",
-    "end_time":   "2026-03-24T18:00:00Z",
+    "start_time": "2026-04-15T08:00:00Z",
+    "end_time":   "2026-04-15T20:00:00Z",
     "criteria_type": "bbox",
     "geometry": {
       "type": "Polygon",
@@ -232,22 +274,44 @@ curl -X POST http://localhost:8080/tasks \
   }'
 ```
 
+**Example: IP criteria with per-task SFTP upload**
+
+```bash
+curl -k -X POST https://localhost:8081/tasks \
+  -H "Content-Type: application/json" \
+  -d '{
+    "correlation_id": "campaign-ip-sftp",
+    "start_time": "2026-04-15T08:00:00Z",
+    "end_time":   "2026-04-15T20:00:00Z",
+    "criteria_type": "ip",
+    "ip_address": "8.8.8.8",
+    "count": 100,
+    "sftp": {
+      "host": "sftp.example.com",
+      "port": 22,
+      "user": "uploader",
+      "password": "secret",
+      "dir": "/uploads/campaign-ip-sftp"
+    }
+  }'
+```
+
 #### List tasks
 
-```
-GET /tasks
+```bash
+curl -k https://localhost:8081/tasks
 ```
 
 #### Get task
 
-```
-GET /tasks/{id}
+```bash
+curl -k https://localhost:8081/tasks/campaign-ip-001
 ```
 
 #### Delete task
 
-```
-DELETE /tasks/{id}
+```bash
+curl -k -X DELETE https://localhost:8081/tasks/campaign-ip-001
 ```
 
 Returns `204 No Content`.
@@ -276,6 +340,8 @@ After all tasks in a tick have been processed, a single zip archive is created f
 {out-dir}/output_{unix_timestamp}.zip
 ```
 
+If SFTP is configured, the zip is uploaded and then both the zip and all JSONL files for that tick are deleted locally. If the upload fails, all local files are kept.
+
 Each request includes an `ext` object:
 
 ```json
@@ -298,9 +364,9 @@ Every task type maintains a `last_geo` that is persisted in `tasks.json` and upd
 
 | Criteria | Initial `last_geo` |
 |---|---|
-| `ip` | Resolved from MaxMind MMDB at task creation time |
+| `ip` | Resolved from MaxMind MMDB at task creation time; used as anchor for device pool initialisation |
 | `ifa` | Random city, resolved at task creation time |
-| `bbox` | Random point within the polygon, set on the first scheduler tick |
+| `bbox` | No `last_geo`; devices initialised at random points within the polygon's bounding box on the first tick |
 
 #### ip and bbox — per-device walking
 
@@ -383,6 +449,11 @@ MMDB_PATH=/app/data/GeoLite2-City.mmdb
 NOMINATIM_URL=https://nominatim.openstreetmap.org
 TLS_CERT_PATH=./certs/server.crt
 TLS_KEY_PATH=./certs/server.key
+SFTP_HOST=
+SFTP_PORT=22
+SFTP_USER=
+SFTP_PASSWORD=
+SFTP_DIR=/
 BBOX_MAX_LAT=
 BBOX_MAX_LON=
 BBOX_MIN_LAT=

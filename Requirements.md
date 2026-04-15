@@ -11,5 +11,7 @@
 - number of rtb requests
 - application should persists all task requests
 - application should generate each five minutes rtb requests for all running tasks ( all tasks for whichh current timestamp is between start time and end time) and save them to a file as json lines
+- application should add files generated in last run into a zip file and remove jsonl files
+- application should upload zip file to specified sftp server and delete local zip file
 
 # If you have any questions please ask
