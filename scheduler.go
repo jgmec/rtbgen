@@ -68,58 +68,68 @@ func (sc *Scheduler) run(now time.Time) {
 		return
 	}
 	log.Printf("scheduler tick: %d active task(s)", len(tasks))
-	var generated []string
+
+	// Generate JSONL files and group them by their effective SFTP target.
+	// Tasks that share the same SFTP config are bundled into one zip.
+	// Tasks with no SFTP config (and no global default) are bundled into a
+	// local-only zip that is kept on disk.
+	type sftpGroup struct {
+		cfg   *SFTPConfig // nil = no upload, keep locally
+		files []string
+	}
+	groups := make(map[string]*sftpGroup)
+
 	for _, task := range tasks {
 		filename, err := sc.generateForTask(task, now)
 		if err != nil {
 			log.Printf("task %s: generation error: %v", task.CorrelationID, err)
 			continue
 		}
-		generated = append(generated, filename)
-	}
-	if len(generated) > 0 {
-		zipPath := filepath.Join(sc.outDir, fmt.Sprintf("output_%d.zip", now.Unix()))
-		if err := createZip(zipPath, generated...); err != nil {
-			log.Printf("tick zip error: %v", err)
-			return
-		}
-		sc.uploadZip(zipPath, generated, tasks)
-	}
-}
 
-// uploadZip uploads zipPath to all unique SFTP targets from the tick's tasks (falling back to the
-// global default when a task has no SFTP config). Deletes the local zip and JSONL files after all
-// uploads succeed.
-func (sc *Scheduler) uploadZip(zipPath string, jsonlPaths []string, tasks []*Task) {
-	// Collect unique SFTP targets.
-	seen := make(map[string]*SFTPConfig)
-	for _, t := range tasks {
-		cfg := t.SFTP
+		cfg := task.SFTP
 		if cfg == nil {
 			cfg = sc.defaultSFTP
 		}
+
+		key := "local"
 		if cfg != nil && cfg.Host != "" {
-			seen[sftpKey(cfg)] = cfg
+			key = sftpKey(cfg)
+		} else {
+			cfg = nil
 		}
-	}
-	if len(seen) == 0 {
-		return // no SFTP configured — keep zip locally
+
+		if groups[key] == nil {
+			groups[key] = &sftpGroup{cfg: cfg}
+		}
+		groups[key].files = append(groups[key].files, filename)
 	}
 
-	allOK := true
-	for _, cfg := range seen {
-		if err := uploadSFTP(cfg, zipPath); err != nil {
-			log.Printf("sftp upload to %s: %v", cfg.addr(), err)
-			allOK = false
-		} else {
-			log.Printf("sftp upload to %s: ok (%s)", cfg.addr(), filepath.Base(zipPath))
+	// Create one zip per group and upload where configured.
+	i := 0
+	for _, g := range groups {
+		zipPath := filepath.Join(sc.outDir, fmt.Sprintf("output_%d_%d.zip", now.Unix(), i))
+		i++
+		if err := createZip(zipPath, g.files...); err != nil {
+			log.Printf("tick zip error: %v", err)
+			continue
+		}
+		if g.cfg != nil {
+			sc.uploadAndClean(zipPath, g.files, g.cfg)
 		}
 	}
-	if allOK {
-		for _, p := range append(jsonlPaths, zipPath) {
-			if err := os.Remove(p); err != nil {
-				log.Printf("delete local file %s: %v", p, err)
-			}
+}
+
+// uploadAndClean uploads zipPath to a single SFTP target and removes the zip and
+// all JSONL files on success. On failure, all local files are kept intact.
+func (sc *Scheduler) uploadAndClean(zipPath string, jsonlPaths []string, cfg *SFTPConfig) {
+	if err := uploadSFTP(cfg, zipPath); err != nil {
+		log.Printf("sftp upload to %s: %v", cfg.addr(), err)
+		return
+	}
+	log.Printf("sftp upload to %s: ok (%s)", cfg.addr(), filepath.Base(zipPath))
+	for _, p := range append(jsonlPaths, zipPath) {
+		if err := os.Remove(p); err != nil {
+			log.Printf("delete local file %s: %v", p, err)
 		}
 	}
 }

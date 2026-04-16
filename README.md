@@ -140,13 +140,24 @@ The script produces a 4096-bit RSA certificate valid for 10 years with `subjectA
 
 ### SFTP upload
 
-After each scheduler tick, the zip archive is uploaded to one or more SFTP servers and then the local zip and all JSONL files for that tick are deleted. If any upload fails, all local files are kept.
+After each scheduler tick, tasks are grouped by their effective SFTP target. One zip archive is created per group and uploaded to the corresponding server. The zip and all JSONL files in the group are deleted locally after a successful upload. If the upload fails, all local files are kept.
 
-**Global default** — configured via flags or env variables, applies to every task that does not specify its own SFTP server.
+**Global default** — configured via flags or env variables, used for every task that does not supply its own `sftp` object.
 
-**Per-task override** — supply an `sftp` object in the create-task request body. That task's output is uploaded to its own server instead of (not in addition to) the global default.
+**Per-task override** — supply an `sftp` object in the create-task request body. That task's JSONL is grouped with other tasks sharing the same SFTP config, not with tasks using the global default.
 
-If the same host/port/user/dir combination appears in multiple tasks and as the global default, it is deduplicated and uploaded to once.
+**Grouping rules:**
+- Tasks that share the same SFTP config (host + port + user + dir) are bundled into one zip and uploaded once.
+- Tasks with no SFTP config fall back to the global default; if those also share the same config they are bundled together.
+- Tasks with no SFTP and no global default are still zipped locally but never uploaded.
+
+**Example with mixed targets in the same tick:**
+
+| Task | SFTP config | Result |
+|---|---|---|
+| `campaign-a1`, `campaign-a2` | `sftp-a.example.com` | One zip → uploaded to `sftp-a` |
+| `campaign-b1` | `sftp-b.example.com` | Separate zip → uploaded to `sftp-b` |
+| `campaign-local` | none (no global default) | Zip kept locally only |
 
 **Example: task with a dedicated SFTP target**
 
@@ -334,13 +345,13 @@ Every `-scheduler-interval`, the scheduler finds all `active` tasks and generate
 {out-dir}/task_{correlation_id}_{unix_timestamp}.jsonl
 ```
 
-After all tasks in a tick have been processed, a single zip archive is created for that tick containing all JSONL files generated in it:
+After all tasks in a tick have been processed, tasks are grouped by their effective SFTP target and one zip archive is created per group:
 
 ```
-{out-dir}/output_{unix_timestamp}.zip
+{out-dir}/output_{unix_timestamp}_{n}.zip
 ```
 
-If SFTP is configured, the zip is uploaded and then both the zip and all JSONL files for that tick are deleted locally. If the upload fails, all local files are kept.
+If SFTP is configured for a group, its zip is uploaded and then the zip and all JSONL files in that group are deleted locally. If the upload fails, all local files are kept. Groups with no SFTP configured produce a zip that stays on disk.
 
 Each request includes an `ext` object:
 

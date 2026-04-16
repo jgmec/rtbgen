@@ -807,27 +807,11 @@ func TestCreateZip_UnwritableDestination(t *testing.T) {
 	}
 }
 
-// ---- uploadZip tests ----
+// ---- uploadAndClean / grouping tests ----
 
-func TestUploadZip_NoSFTPConfigured_FilesKeptLocally(t *testing.T) {
-	dir := t.TempDir()
-	jsonlPath := dir + "/task_x_1.jsonl"
-	zipPath := dir + "/out.zip"
-	os.WriteFile(jsonlPath, []byte("{\"id\":\"1\"}\n"), 0644)
-	os.WriteFile(zipPath, []byte("zip"), 0644)
-
-	sc := NewScheduler(newTestStore(t), dir, 5*time.Minute, nil, nil, nil)
-	sc.uploadZip(zipPath, []string{jsonlPath}, []*Task{})
-
-	if _, err := os.Stat(zipPath); err != nil {
-		t.Error("zip should not be deleted when no SFTP is configured")
-	}
-	if _, err := os.Stat(jsonlPath); err != nil {
-		t.Error("jsonl should not be deleted when no SFTP is configured")
-	}
-}
-
-func TestUploadZip_SFTPFails_FilesKeptLocally(t *testing.T) {
+// TestUploadAndClean_SFTPFails_FilesKeptLocally verifies that local files are
+// preserved when the SFTP upload fails.
+func TestUploadAndClean_SFTPFails_FilesKeptLocally(t *testing.T) {
 	dir := t.TempDir()
 	jsonlPath := dir + "/task_x_1.jsonl"
 	zipPath := dir + "/out.zip"
@@ -836,14 +820,103 @@ func TestUploadZip_SFTPFails_FilesKeptLocally(t *testing.T) {
 
 	// Port 1 will always refuse connections.
 	badSFTP := &SFTPConfig{Host: "127.0.0.1", Port: 1, User: "u", Password: "p"}
-	sc := NewScheduler(newTestStore(t), dir, 5*time.Minute, nil, nil, badSFTP)
-	task := &Task{CorrelationID: "x"}
-	sc.uploadZip(zipPath, []string{jsonlPath}, []*Task{task})
+	sc := NewScheduler(newTestStore(t), dir, 5*time.Minute, nil, nil, nil)
+	sc.uploadAndClean(zipPath, []string{jsonlPath}, badSFTP)
 
 	if _, err := os.Stat(zipPath); err != nil {
 		t.Error("zip should be kept after failed upload")
 	}
 	if _, err := os.Stat(jsonlPath); err != nil {
 		t.Error("jsonl should be kept after failed upload")
+	}
+}
+
+// TestRun_NoSFTP_ZipKeptLocally verifies that when no SFTP is configured the
+// zip is created locally and not deleted.
+func TestRun_NoSFTP_ZipKeptLocally(t *testing.T) {
+	store := newTestStore(t)
+	outDir := t.TempDir()
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil)
+
+	now := time.Now()
+	store.Add(&Task{
+		CorrelationID: "local-task",
+		StartTime:     now.Add(-time.Hour),
+		EndTime:       now.Add(time.Hour),
+		CriteriaType:  CriteriaIFA,
+		IFA:           "ifa-local",
+		Count:         2,
+		LastGeo:       &Geo{Lat: 51.5, Lon: -0.1},
+	})
+	sc.run(now)
+
+	entries, _ := os.ReadDir(outDir)
+	var zips, jsonls int
+	for _, e := range entries {
+		switch {
+		case strings.HasSuffix(e.Name(), ".zip"):
+			zips++
+		case strings.HasSuffix(e.Name(), ".jsonl"):
+			jsonls++
+		}
+	}
+	if zips != 1 {
+		t.Errorf("expected 1 zip, got %d", zips)
+	}
+	if jsonls != 1 {
+		t.Errorf("expected 1 jsonl, got %d", jsonls)
+	}
+}
+
+// TestRun_SFTPGrouping verifies that tasks are grouped by SFTP config:
+// tasks sharing the same SFTP produce one zip, tasks with a different SFTP
+// produce a separate zip, and tasks with no SFTP produce a local-only zip.
+func TestRun_SFTPGrouping(t *testing.T) {
+	store := newTestStore(t)
+	outDir := t.TempDir()
+	badSFTP := &SFTPConfig{Host: "127.0.0.1", Port: 1, User: "u", Password: "p"}
+	// No global default — tasks will each carry their own SFTP or none.
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil)
+
+	now := time.Now()
+	sftpA := &SFTPConfig{Host: "sftp-a.example.com", Port: 22, User: "u", Password: "p", Dir: "/"}
+	sftpB := &SFTPConfig{Host: "sftp-b.example.com", Port: 22, User: "u", Password: "p", Dir: "/"}
+	_ = badSFTP
+
+	addIFATask := func(id, ifa string, sftp *SFTPConfig) {
+		store.Add(&Task{
+			CorrelationID: id,
+			StartTime:     now.Add(-time.Hour),
+			EndTime:       now.Add(time.Hour),
+			CriteriaType:  CriteriaIFA,
+			IFA:           ifa,
+			Count:         1,
+			LastGeo:       &Geo{Lat: 51.5, Lon: -0.1},
+			SFTP:          sftp,
+		})
+	}
+
+	// Two tasks on sftp-a → one zip for sftp-a.
+	addIFATask("task-a1", "ifa-a1", sftpA)
+	addIFATask("task-a2", "ifa-a2", sftpA)
+	// One task on sftp-b → separate zip.
+	addIFATask("task-b1", "ifa-b1", sftpB)
+	// One task with no SFTP → local zip.
+	addIFATask("task-local", "ifa-local", nil)
+
+	sc.run(now)
+
+	// Count zip files produced (SFTP uploads will fail since hosts are fake,
+	// so all zips stay locally — we can count them).
+	entries, _ := os.ReadDir(outDir)
+	var zips []string
+	for _, e := range entries {
+		if strings.HasSuffix(e.Name(), ".zip") {
+			zips = append(zips, e.Name())
+		}
+	}
+	// Expect 3 zips: one for sftp-a (2 tasks), one for sftp-b (1 task), one local.
+	if len(zips) != 3 {
+		t.Errorf("expected 3 zip files (one per SFTP group + local), got %d: %v", len(zips), zips)
 	}
 }
