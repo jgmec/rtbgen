@@ -6,6 +6,8 @@ import (
 	"math"
 	"math/rand"
 	"time"
+
+	"github.com/google/uuid"
 )
 
 // Generator configuration
@@ -27,6 +29,9 @@ var DefaultConfig = GeneratorConfig{
 	MaxBidFloor:    10.0,
 	TestMode:       false,
 }
+
+// tsFormat is the layout used for ext.ts in all generated bid requests.
+const tsFormat = "2006-01-02T15:04:05.000-07:00"
 
 // Helper functions
 func randomID() string {
@@ -363,7 +368,7 @@ func generateDevice(config GeneratorConfig) *Device {
 		Language:       randomChoice([]string{"en", "es", "fr", "de", "zh", "ja", "pt", "ru"}),
 		Carrier:        randomChoice(carriers),
 		ConnectionType: randomInt(0, 6), // 0=unknown, 1=Ethernet, 2=WIFI, 3=Cellular-Unknown, 4=2G, 5=3G, 6=4G
-		IFA:            fmt.Sprintf("%08x-%04x-%04x-%04x-%012x", rand.Uint32(), rand.Uint32()&0xffff, rand.Uint32()&0xffff, rand.Uint32()&0xffff, rand.Uint64()&0xffffffffffff),
+		IFA:            uuid.New().String(),
 		JS:             1,
 		W:              randomChoiceInt(widths),
 		H:              randomChoiceInt(heights),
@@ -583,7 +588,7 @@ func generateGeoInBBox(bbox *BoundingBox) *Geo {
 
 // generateRequestForTask creates a BidRequest tailored to a task's criteria,
 // with a random timestamp in [windowStart, windowEnd).
-func generateRequestForTask(task *Task, windowStart, windowEnd time.Time, baseGeo *Geo, deviceIFA string) *BidRequest {
+func generateRequestForTask(task *Task, ts time.Time, baseGeo *Geo, deviceIFA string) *BidRequest {
 	config := DefaultConfig
 	switch task.CriteriaType {
 	case CriteriaBBox:
@@ -612,11 +617,10 @@ func generateRequestForTask(task *Task, windowStart, windowEnd time.Time, baseGe
 		req.Device.IFA = task.IFA
 	}
 
-	ts := randomTimestamp(windowStart, windowEnd)
 	req.Ext = map[string]any{
 		"task_id":        task.CorrelationID,
 		"correlation_id": task.CorrelationID,
-		"timestamp":      ts.UnixMilli(),
+		"ts":             ts.UTC().Format(tsFormat),
 	}
 
 	return req

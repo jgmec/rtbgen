@@ -7,7 +7,7 @@ RUN go build -o rtb-generator .
 
 FROM alpine:3.23
 
-RUN adduser -D -u 1000 appuser
+RUN apk add --no-cache tzdata && adduser -D -u 1000 appuser
 
 WORKDIR /app
 COPY --from=builder /app/rtb-generator .

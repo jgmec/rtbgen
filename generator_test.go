@@ -5,6 +5,8 @@ import (
 	"encoding/json"
 	"math"
 	"net"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -130,7 +132,7 @@ func TestGenerateRequestForTask_IP(t *testing.T) {
 		IPAddress:     "10.0.0.1",
 	}
 	now := time.Now()
-	req := generateRequestForTask(task, now.Add(-5*time.Minute), now, nil, "")
+	req := generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), nil, "")
 
 	if req.Device.IP != "10.0.0.1" {
 		t.Errorf("got IP %q, want %q", req.Device.IP, "10.0.0.1")
@@ -145,7 +147,7 @@ func TestGenerateRequestForTask_IP(t *testing.T) {
 	if ext["correlation_id"] != "task-1" {
 		t.Errorf("ext.correlation_id: got %v, want task-1", ext["correlation_id"])
 	}
-	if _, ok := ext["timestamp"]; !ok {
+	if _, ok := ext["ts"]; !ok {
 		t.Error("ext.timestamp should be set")
 	}
 }
@@ -178,7 +180,7 @@ func TestGenerateRequestForTask_IFA_SameLocation(t *testing.T) {
 	const kmPerDegree = 111.0
 
 	for range 20 {
-		req := generateRequestForTask(task, now.Add(-5*time.Minute), now, baseGeo, "")
+		req := generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), baseGeo, "")
 		geo := req.Device.Geo
 		dLat := (geo.Lat - baseGeo.Lat) * kmPerDegree
 		dLon := (geo.Lon - baseGeo.Lon) * kmPerDegree * math.Cos(baseGeo.Lat*math.Pi/180)
@@ -221,7 +223,7 @@ func TestIFA_ConsecutiveLocationsWithin2km(t *testing.T) {
 
 	reqs := make([]*BidRequest, count)
 	for i := range count {
-		reqs[i] = generateRequestForTask(task, now.Add(-5*time.Minute), now, baseGeo, "")
+		reqs[i] = generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), baseGeo, "")
 	}
 
 	for i, req := range reqs {
@@ -251,7 +253,7 @@ func TestIFA_ConsistentBaseGeoAcrossSchedulerRuns(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
 	srv := NewServer(store, nil)
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil)
 
 	now := time.Now()
 	task := &Task{
@@ -326,7 +328,7 @@ func TestGenerateRequestForTask_IFA(t *testing.T) {
 		IFA:          "ifa-abc-123",
 	}
 	now := time.Now()
-	req := generateRequestForTask(task, now.Add(-5*time.Minute), now, nil, "")
+	req := generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), nil, "")
 
 	if req.Device.IFA != "ifa-abc-123" {
 		t.Errorf("got IFA %q, want %q", req.Device.IFA, "ifa-abc-123")
@@ -340,7 +342,7 @@ func TestGenerateRequestForTask_BBox(t *testing.T) {
 	}
 	now := time.Now()
 	for range 10 {
-		req := generateRequestForTask(task, now.Add(-5*time.Minute), now, nil, "")
+		req := generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), nil, "")
 		geo := req.Device.Geo
 		if geo.Lat < 50.0 || geo.Lat > 51.0 {
 			t.Errorf("lat %f outside bbox", geo.Lat)
@@ -432,7 +434,7 @@ func TestGenerateImpression_Random(t *testing.T) {
 }
 
 func TestScheduler_StartStop(t *testing.T) {
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 100*time.Millisecond, nil, nil, nil)
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, nil, nil)
 	done := make(chan struct{})
 	go func() {
 		sc.Start()
@@ -448,7 +450,7 @@ func TestScheduler_StartStop(t *testing.T) {
 
 func TestScheduler_RunNoActiveTasks(t *testing.T) {
 	outDir := t.TempDir()
-	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil, nil)
+	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil, nil, nil)
 	sc.run(time.Now())
 	entries := readJSONLEntries(t, outDir)
 	if len(entries) != 0 {
@@ -460,7 +462,7 @@ func TestScheduler_GenerateForTask_OutDirError(t *testing.T) {
 	// Use a file as the output dir so MkdirAll fails.
 	blockingFile := t.TempDir() + "/file"
 	os.WriteFile(blockingFile, []byte("x"), 0644)
-	sc := NewScheduler(newTestStore(t), blockingFile+"/subdir", 5*time.Minute, nil, nil, nil)
+	sc := NewScheduler(newTestStore(t), blockingFile, 5*time.Minute, nil, nil, nil, nil)
 	_, err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
 	if err == nil {
 		t.Error("expected error when outDir cannot be created")
@@ -471,7 +473,7 @@ func TestScheduler_GenerateForTask_FileCreateError(t *testing.T) {
 	outDir := t.TempDir()
 	os.Chmod(outDir, 0444)
 	defer os.Chmod(outDir, 0755)
-	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil, nil)
+	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil, nil, nil)
 	_, err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
 	if err == nil {
 		t.Error("expected error when output file cannot be created")
@@ -481,7 +483,7 @@ func TestScheduler_GenerateForTask_FileCreateError(t *testing.T) {
 func TestScheduler_GenerateForTask(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil)
 
 	now := time.Now()
 	task := &Task{
@@ -506,7 +508,7 @@ func TestScheduler_GenerateForTask(t *testing.T) {
 func TestScheduler_Run(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil)
 
 	now := time.Now()
 	active := &Task{
@@ -608,7 +610,7 @@ func TestIP_InitialGeoFromMMDB(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
 	srv := NewServer(store, db)
-	sc := NewScheduler(store, outDir, 5*time.Minute, db, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, db, nil, nil, nil)
 
 	// Look up expected coordinates directly from the MMDB.
 	record, err := db.City(net.ParseIP("8.8.8.8"))
@@ -661,7 +663,7 @@ func TestIP_ConsecutiveLocationsWithin2km(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
 	srv := NewServer(store, nil)
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil)
 
 	const count = 20
 	now := time.Now()
@@ -820,7 +822,7 @@ func TestUploadAndClean_SFTPFails_FilesKeptLocally(t *testing.T) {
 
 	// Port 1 will always refuse connections.
 	badSFTP := &SFTPConfig{Host: "127.0.0.1", Port: 1, User: "u", Password: "p"}
-	sc := NewScheduler(newTestStore(t), dir, 5*time.Minute, nil, nil, nil)
+	sc := NewScheduler(newTestStore(t), dir, 5*time.Minute, nil, nil, nil, nil)
 	sc.uploadAndClean(zipPath, []string{jsonlPath}, badSFTP)
 
 	if _, err := os.Stat(zipPath); err != nil {
@@ -836,7 +838,7 @@ func TestUploadAndClean_SFTPFails_FilesKeptLocally(t *testing.T) {
 func TestRun_NoSFTP_ZipKeptLocally(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil)
 
 	now := time.Now()
 	store.Add(&Task{
@@ -876,7 +878,7 @@ func TestRun_SFTPGrouping(t *testing.T) {
 	outDir := t.TempDir()
 	badSFTP := &SFTPConfig{Host: "127.0.0.1", Port: 1, User: "u", Password: "p"}
 	// No global default — tasks will each carry their own SFTP or none.
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil)
 
 	now := time.Now()
 	sftpA := &SFTPConfig{Host: "sftp-a.example.com", Port: 22, User: "u", Password: "p", Dir: "/"}
@@ -920,3 +922,255 @@ func TestRun_SFTPGrouping(t *testing.T) {
 		t.Errorf("expected 3 zip files (one per SFTP group + local), got %d: %v", len(zips), zips)
 	}
 }
+
+// ---- TimezoneClient tests ----
+
+func TestTimezoneClient_NilReceiver(t *testing.T) {
+	var c *TimezoneClient
+	if got := c.Timezone(0, 0); got != "" {
+		t.Errorf("expected empty string from nil receiver, got %q", got)
+	}
+}
+
+func TestTimezoneClient_SuccessAndCache(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		json.NewEncoder(w).Encode(map[string]string{"timezone": "America/New_York"})
+	}))
+	defer srv.Close()
+
+	c := NewTimezoneClient(srv.URL)
+	tz1 := c.Timezone(40.71, -74.01)
+	tz2 := c.Timezone(40.71, -74.01) // same rounded coords → cache hit
+
+	if tz1 != "America/New_York" {
+		t.Errorf("expected America/New_York, got %q", tz1)
+	}
+	if tz2 != tz1 {
+		t.Errorf("expected cached result %q, got %q", tz1, tz2)
+	}
+	if calls != 1 {
+		t.Errorf("expected 1 HTTP call (second should hit cache), got %d", calls)
+	}
+}
+
+func TestTimezoneClient_DifferentCoordsNoCacheHit(t *testing.T) {
+	calls := 0
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		calls++
+		json.NewEncoder(w).Encode(map[string]string{"timezone": "Europe/London"})
+	}))
+	defer srv.Close()
+
+	c := NewTimezoneClient(srv.URL)
+	c.Timezone(51.50, -0.10)
+	c.Timezone(51.60, -0.20) // different rounded coords → new request
+	if calls != 2 {
+		t.Errorf("expected 2 HTTP calls for different coords, got %d", calls)
+	}
+}
+
+func TestTimezoneClient_ServerError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	c := NewTimezoneClient(srv.URL)
+	if got := c.Timezone(40.71, -74.01); got != "" {
+		t.Errorf("expected empty string on server error, got %q", got)
+	}
+}
+
+func TestTimezoneClient_InvalidJSON(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Write([]byte("not json"))
+	}))
+	defer srv.Close()
+
+	c := NewTimezoneClient(srv.URL)
+	if got := c.Timezone(40.71, -74.01); got != "" {
+		t.Errorf("expected empty string on invalid JSON, got %q", got)
+	}
+}
+
+func TestTimezoneClient_UnreachableServer(t *testing.T) {
+	c := NewTimezoneClient("http://127.0.0.1:1")
+	if got := c.Timezone(40.71, -74.01); got != "" {
+		t.Errorf("expected empty string for unreachable server, got %q", got)
+	}
+}
+
+// ---- enrichGeo tests ----
+
+func TestEnrichGeo_NilGeo(t *testing.T) {
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, nil, nil)
+	if got := sc.enrichGeo(nil, time.Now()); got != nil {
+		t.Errorf("expected nil for nil geo input, got %+v", got)
+	}
+}
+
+func TestEnrichGeo_NoTzClient(t *testing.T) {
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, nil, nil)
+	geo := &Geo{Lat: 51.5, Lon: -0.1}
+	got := sc.enrichGeo(geo, time.Now())
+	if got == nil {
+		t.Fatal("expected non-nil geo")
+	}
+	if got.UTCOffset != 0 {
+		t.Errorf("expected UTCOffset=0 with no tzClient, got %d", got.UTCOffset)
+	}
+}
+
+func TestEnrichGeo_TzClientSetsUTCOffset(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"timezone": "America/New_York"})
+	}))
+	defer srv.Close()
+
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil)
+	geo := &Geo{Lat: 40.7, Lon: -74.0}
+	ts := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC) // January → EST (UTC-5)
+
+	got := sc.enrichGeo(geo, ts)
+	if got == nil {
+		t.Fatal("expected non-nil geo")
+	}
+	loc, _ := time.LoadLocation("America/New_York")
+	_, expectedSecs := ts.In(loc).Zone()
+	if got.UTCOffset != expectedSecs/60 {
+		t.Errorf("expected UTCOffset=%d, got %d", expectedSecs/60, got.UTCOffset)
+	}
+}
+
+func TestEnrichGeo_TzClientEmptyTz(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"timezone": ""})
+	}))
+	defer srv.Close()
+
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil)
+	geo := &Geo{Lat: 40.7, Lon: -74.0}
+	got := sc.enrichGeo(geo, time.Now())
+	if got == nil {
+		t.Fatal("expected non-nil geo")
+	}
+	if got.UTCOffset != 0 {
+		t.Errorf("expected UTCOffset=0 for empty timezone, got %d", got.UTCOffset)
+	}
+}
+
+func TestEnrichGeo_TzClientInvalidTz(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"timezone": "INVALID_TIMEZONE"})
+	}))
+	defer srv.Close()
+
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil)
+	geo := &Geo{Lat: 40.7, Lon: -74.0}
+	got := sc.enrichGeo(geo, time.Now())
+	if got == nil {
+		t.Fatal("expected non-nil geo")
+	}
+	if got.UTCOffset != 0 {
+		t.Errorf("expected UTCOffset=0 for invalid timezone name, got %d", got.UTCOffset)
+	}
+}
+
+func TestEnrichGeo_OriginalGeoUnmodified(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"timezone": "America/New_York"})
+	}))
+	defer srv.Close()
+
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil)
+	original := &Geo{Lat: 40.7, Lon: -74.0, UTCOffset: 0}
+	got := sc.enrichGeo(original, time.Now())
+
+	if got == original {
+		t.Error("enrichGeo should return a new Geo, not mutate the original")
+	}
+	if original.UTCOffset != 0 {
+		t.Error("enrichGeo must not modify the original Geo")
+	}
+}
+
+// TestExtTS_MatchesDeviceGeoTimezone verifies that ext.ts is formatted in the
+// same timezone as device.geo.utcoffset for both ifa and ip/bbox task types.
+func TestExtTS_MatchesDeviceGeoTimezone(t *testing.T) {
+	// tzf-server mock: New York → UTC-5 in January (EST)
+	tzSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		json.NewEncoder(w).Encode(map[string]string{"timezone": "America/New_York"})
+	}))
+	defer tzSrv.Close()
+
+	loc, _ := time.LoadLocation("America/New_York")
+
+	for _, criteriaType := range []CriteriaType{CriteriaIFA, CriteriaIP} {
+		t.Run(string(criteriaType), func(t *testing.T) {
+			store := newTestStore(t)
+			outDir := t.TempDir()
+			tzClient := NewTimezoneClient(tzSrv.URL)
+			sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, tzClient, nil)
+
+			anchor := &Geo{Lat: 40.7128, Lon: -74.0060}
+			now := time.Now()
+			task := &Task{
+				CorrelationID: "tz-test-" + string(criteriaType),
+				StartTime:     now.Add(-time.Hour),
+				EndTime:       now.Add(time.Hour),
+				CriteriaType:  criteriaType,
+				IPAddress:     "8.8.8.8",
+				IFA:           "38400000-8cf0-11bd-b23e-10b96e40000d",
+				Count:         3,
+				LastGeo:       anchor,
+			}
+			store.Add(task)
+
+			filename, err := sc.generateForTask(task, now)
+			if err != nil {
+				t.Fatalf("generateForTask: %v", err)
+			}
+
+			data, _ := os.ReadFile(filename)
+			for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+				var req struct {
+					Device struct {
+						Geo struct {
+							UTCOffset int `json:"utcoffset"`
+						} `json:"geo"`
+					} `json:"device"`
+					Ext map[string]any `json:"ext"`
+				}
+				if err := json.Unmarshal([]byte(line), &req); err != nil {
+					t.Fatalf("unmarshal: %v", err)
+				}
+
+				tsStr, ok := req.Ext["ts"].(string)
+				if !ok {
+					t.Fatal("ext.ts should be a string")
+				}
+				ts, err := time.Parse(tsFormat, tsStr)
+				if err != nil {
+					t.Fatalf("parse ext.ts %q: %v", tsStr, err)
+				}
+
+				// UTC offset in ext.ts must match device.geo.utcoffset.
+				_, tsOffsetSecs := ts.Zone()
+				if tsOffsetSecs/60 != req.Device.Geo.UTCOffset {
+					t.Errorf("ext.ts offset %d min != device.geo.utcoffset %d min",
+						tsOffsetSecs/60, req.Device.Geo.UTCOffset)
+				}
+
+				// The offset must be the correct DST-aware value for New York at ts.
+				_, expectedSecs := ts.In(loc).Zone()
+				if tsOffsetSecs != expectedSecs {
+					t.Errorf("ext.ts offset %ds != expected New York offset %ds at %s",
+						tsOffsetSecs, expectedSecs, ts)
+				}
+			}
+		})
+	}
+}
+

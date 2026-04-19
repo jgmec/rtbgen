@@ -1,4 +1,10 @@
 services:
+  tzf-server:
+    image: ringsaturn/tzf-server:v0.13.6
+    ports:
+      - "${TZF_PORT}:8080"
+    restart: unless-stopped
+
   rtbgen:
     build: .
     env_file: .env
@@ -15,6 +21,7 @@ services:
       - -scheduler-interval=${SCHEDULER_INTERVAL}
       - -mmdb=${MMDB_PATH}
       - -nominatim-url=${NOMINATIM_URL}
+      - -tzf-url=${TZF_URL}
       - -tls-cert=/app/certs/server.crt
       - -tls-key=/app/certs/server.key
       - -sftp-host=${SFTP_HOST}
@@ -24,5 +31,7 @@ services:
       - -sftp-dir=${SFTP_DIR}
       - -bbox=${BBOX_MAX_LAT},${BBOX_MAX_LON},${BBOX_MIN_LAT},${BBOX_MIN_LON}
     restart: unless-stopped
+    depends_on:
+      - tzf-server
     extra_hosts:
       - "host.docker.internal:host-gateway"

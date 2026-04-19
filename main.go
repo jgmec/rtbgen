@@ -10,7 +10,6 @@ import (
 	"strconv"
 	"strings"
 	"time"
-
 	"github.com/oschwald/geoip2-golang"
 )
 
@@ -26,6 +25,7 @@ func main() {
 	schedulerInterval := flag.Duration("scheduler-interval", 5*time.Minute, "How often the scheduler generates requests for active tasks (server mode only)")
 	mmdbPath := flag.String("mmdb", "", "Path to MaxMind GeoIP2 City MMDB file (optional)")
 	nominatimURL := flag.String("nominatim-url", "https://nominatim.openstreetmap.org", "Base URL for Nominatim reverse geocoding (optional)")
+	tzfURL := flag.String("tzf-url", "", "Base URL for tzf-server timezone lookups (optional)")
 	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file (enables HTTPS)")
 	tlsKey := flag.String("tls-key", "", "Path to TLS private key file (enables HTTPS)")
 	sftpHost := flag.String("sftp-host", "", "Default SFTP server hostname")
@@ -57,7 +57,7 @@ func main() {
 				Dir:      *sftpDir,
 			}
 		}
-		runServer(*port, *tasksFile, *outDir, *schedulerInterval, *mmdbPath, *nominatimURL, *tlsCert, *tlsKey, defaultSFTP)
+		runServer(*port, *tasksFile, *outDir, *schedulerInterval, *mmdbPath, *nominatimURL, *tzfURL, *tlsCert, *tlsKey, defaultSFTP)
 		return
 	}
 
@@ -89,12 +89,12 @@ func main() {
 		now := time.Now()
 		req := GenerateRandomBidRequestWithConfig(*requestType, *impType, config)
 		ts := randomTimestamp(now.Add(-*schedulerInterval), now)
-		req.Ext = map[string]any{"timestamp": ts.UnixMilli()}
+		req.Ext = map[string]any{"ts": ts.In(time.FixedZone("", 0)).Format(tsFormat)}
 		printJSON(req)
 	}
 }
 
-func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, mmdbPath, nominatimURL, tlsCert, tlsKey string, defaultSFTP *SFTPConfig) {
+func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, mmdbPath, nominatimURL, tzfURL, tlsCert, tlsKey string, defaultSFTP *SFTPConfig) {
 	store, err := NewTaskStore(tasksFile)
 	if err != nil {
 		log.Fatalf("load task store: %v", err)
@@ -116,7 +116,13 @@ func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, 
 		log.Printf("reverse geocoding enabled: %s", nominatimURL)
 	}
 
-	scheduler := NewScheduler(store, outDir, schedulerInterval, mmdb, geocoder, defaultSFTP)
+	var tzClient *TimezoneClient
+	if tzfURL != "" {
+		tzClient = NewTimezoneClient(tzfURL)
+		log.Printf("timezone lookup enabled: %s", tzfURL)
+	}
+
+	scheduler := NewScheduler(store, outDir, schedulerInterval, mmdb, geocoder, tzClient, defaultSFTP)
 	go scheduler.Start()
 
 	srv := NewServer(store, mmdb)

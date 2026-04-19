@@ -15,6 +15,7 @@ A Go CLI tool and HTTP service for generating random [OpenRTB 2.5](https://www.i
 - Per-device geo pools for `ip` and `bbox` tasks — each device walks independently across ticks
 - Single walking location for `ifa` tasks — path persisted across ticks and server restarts
 - Reverse geocoding via Nominatim — enriches all generated geo points with city, country, region, and postcode
+- Timezone-aware timestamps — `ext.ts` is an ISO 8601 string with the device's local UTC offset (millisecond precision), resolved via tzf-server
 - HTTPS support with TLS certificates
 - SFTP upload of tick output — per-task or global default; local files deleted after successful upload
 - Docker and Docker Compose support
@@ -65,7 +66,7 @@ Requires Go 1.23+.
 ./rtb-generator -count=20 -scheduler-interval=10m
 ```
 
-Each generated request includes an `ext.timestamp` field — a Unix millisecond timestamp randomized within `[now - scheduler-interval, now]`.
+Each generated request includes an `ext.ts` field — an ISO 8601 timestamp with `+00:00` offset (CLI has no geo, so UTC is used), randomized within `[now - scheduler-interval, now]`. Example: `"2026-04-15T10:23:41.782+00:00"`.
 
 ### CLI vs HTTP service
 
@@ -78,7 +79,7 @@ Each generated request includes an `ext.timestamp` field — a Unix millisecond 
 | Geo | random or within `-bbox` | walking path persisted across ticks |
 | `-bbox` format | `maxlat,maxlon,minlat,minlon` | GeoJSON `Polygon` in request body |
 | `-mmdb` | parsed but unused | used to resolve IP coordinates at task creation |
-| `ext` fields | `timestamp` only | `task_id`, `correlation_id`, `timestamp` |
+| `ext` fields | `ts` only | `task_id`, `correlation_id`, `ts` |
 
 ## HTTP Service
 
@@ -99,6 +100,7 @@ Start the server:
 | `-scheduler-interval` | `5m` | How often active tasks generate requests |
 | `-mmdb` | | Path to MaxMind GeoIP2 City MMDB file (optional) |
 | `-nominatim-url` | `https://nominatim.openstreetmap.org` | Base URL for Nominatim reverse geocoding (optional) |
+| `-tzf-url` | | Base URL for tzf-server timezone lookups (optional) |
 | `-tls-cert` | | Path to TLS certificate file — enables HTTPS when set together with `-tls-key` |
 | `-tls-key` | | Path to TLS private key file — enables HTTPS when set together with `-tls-cert` |
 | `-sftp-host` | | Default SFTP server hostname — enables upload when set |
@@ -125,6 +127,18 @@ Results are cached by rounded coordinates (~1 km grid resolution) so that nearby
 If the lookup fails or the URL is not configured, coordinates are written as-is with no city/country metadata (except for `ip` tasks where the MMDB already provides this).
 
 To use a self-hosted Nominatim instance, set `-nominatim-url` to its base URL.
+
+### Timezone-aware timestamps
+
+When `-tzf-url` is set, the scheduler resolves the IANA timezone name for each device's geo coordinates using a [tzf-server](https://github.com/ringsaturn/tzf-server) instance and sets `device.geo.utcoffset` (minutes from UTC, DST-aware) on every generated request.
+
+The same resolved timezone is used to format `ext.ts` as a local-time ISO 8601 string, so the timestamp offset matches the device location. For example, a device in New York in winter produces `"2026-01-15T07:30:45.123-05:00"`.
+
+Timezone results are cached by rounded coordinates (~1 km grid) to avoid redundant lookups.
+
+If `-tzf-url` is not configured, `device.geo.utcoffset` is omitted and `ext.ts` is formatted in UTC (`+00:00`).
+
+The Docker Compose setup includes a `tzf-server` service. Set `TZF_URL=http://tzf-server:8080` in `.env` to enable it.
 
 ### TLS / HTTPS
 
@@ -360,12 +374,12 @@ Each request includes an `ext` object:
   "ext": {
     "task_id": "...",
     "correlation_id": "...",
-    "timestamp": 1742812345678
+    "ts": "2026-04-15T07:30:45.123-05:00"
   }
 }
 ```
 
-`timestamp` is a Unix millisecond value randomized within `[now - scheduler-interval, now]`.
+`ts` is an ISO 8601 timestamp with millisecond precision, randomized within `[now - scheduler-interval, now]`. The UTC offset reflects the device's local timezone at the event time (requires `-tzf-url`); otherwise `+00:00` is used.
 
 ### Location walking
 
@@ -407,9 +421,9 @@ Each criteria type produces different patterns within a JSONL file. The examples
 All requests share the task's IP. Devices (IFAs) are persistent across ticks and may appear more than once per tick. Geo walks ≤1 km between consecutive appearances of the same device.
 
 ```jsonl
-{"id":"abc1","device":{"ip":"8.8.8.8","ifa":"3a1f2b4c-0001-0001-0001-000000000001","geo":{"lat":37.3861,"lon":-122.0839,"type":2}},"ext":{"correlation_id":"campaign-ip-001","task_id":"campaign-ip-001","timestamp":1742812341000}}
-{"id":"abc2","device":{"ip":"8.8.8.8","ifa":"7e9d1a2f-0002-0002-0002-000000000002","geo":{"lat":37.3901,"lon":-122.0812,"type":2}},"ext":{"correlation_id":"campaign-ip-001","task_id":"campaign-ip-001","timestamp":1742812342000}}
-{"id":"abc3","device":{"ip":"8.8.8.8","ifa":"3a1f2b4c-0001-0001-0001-000000000001","geo":{"lat":37.3865,"lon":-122.0831,"type":2}},"ext":{"correlation_id":"campaign-ip-001","task_id":"campaign-ip-001","timestamp":1742812343000}}
+{"id":"abc1","device":{"ip":"8.8.8.8","ifa":"3a1f2b4c-0001-0001-0001-000000000001","geo":{"lat":37.3861,"lon":-122.0839,"type":2,"utcoffset":-420}},"ext":{"correlation_id":"campaign-ip-001","task_id":"campaign-ip-001","ts":"2026-04-15T00:22:21.000-07:00"}}
+{"id":"abc2","device":{"ip":"8.8.8.8","ifa":"7e9d1a2f-0002-0002-0002-000000000002","geo":{"lat":37.3901,"lon":-122.0812,"type":2,"utcoffset":-420}},"ext":{"correlation_id":"campaign-ip-001","task_id":"campaign-ip-001","ts":"2026-04-15T00:22:22.000-07:00"}}
+{"id":"abc3","device":{"ip":"8.8.8.8","ifa":"3a1f2b4c-0001-0001-0001-000000000001","geo":{"lat":37.3865,"lon":-122.0831,"type":2,"utcoffset":-420}},"ext":{"correlation_id":"campaign-ip-001","task_id":"campaign-ip-001","ts":"2026-04-15T00:22:23.000-07:00"}}
 ```
 
 - `device.ip` is always the task IP address
@@ -421,9 +435,9 @@ All requests share the task's IP. Devices (IFAs) are persistent across ticks and
 Same per-device pool logic as `ip`. No IP field. Locations stay within the polygon's bounding box.
 
 ```jsonl
-{"id":"def1","device":{"ifa":"c4d8e2a1-0003-0003-0003-000000000003","geo":{"lat":40.7214,"lon":-73.9872,"type":2}},"ext":{"correlation_id":"campaign-geo-001","task_id":"campaign-geo-001","timestamp":1742812341000}}
-{"id":"def2","device":{"ifa":"9b3f1c7d-0004-0004-0004-000000000004","geo":{"lat":40.7531,"lon":-74.0124,"type":2}},"ext":{"correlation_id":"campaign-geo-001","task_id":"campaign-geo-001","timestamp":1742812342000}}
-{"id":"def3","device":{"ifa":"c4d8e2a1-0003-0003-0003-000000000003","geo":{"lat":40.7221,"lon":-73.9908,"type":2}},"ext":{"correlation_id":"campaign-geo-001","task_id":"campaign-geo-001","timestamp":1742812343000}}
+{"id":"def1","device":{"ifa":"c4d8e2a1-0003-0003-0003-000000000003","geo":{"lat":40.7214,"lon":-73.9872,"type":2,"utcoffset":-240}},"ext":{"correlation_id":"campaign-geo-001","task_id":"campaign-geo-001","ts":"2026-04-15T03:22:21.000-04:00"}}
+{"id":"def2","device":{"ifa":"9b3f1c7d-0004-0004-0004-000000000004","geo":{"lat":40.7531,"lon":-74.0124,"type":2,"utcoffset":-240}},"ext":{"correlation_id":"campaign-geo-001","task_id":"campaign-geo-001","ts":"2026-04-15T03:22:22.000-04:00"}}
+{"id":"def3","device":{"ifa":"c4d8e2a1-0003-0003-0003-000000000003","geo":{"lat":40.7221,"lon":-73.9908,"type":2,"utcoffset":-240}},"ext":{"correlation_id":"campaign-geo-001","task_id":"campaign-geo-001","ts":"2026-04-15T03:22:23.000-04:00"}}
 ```
 
 - No `device.ip`
@@ -435,9 +449,9 @@ Same per-device pool logic as `ip`. No IP field. Locations stay within the polyg
 All requests share the single fixed IFA from the task. Geo walks ≤2 km between consecutive requests within a tick.
 
 ```jsonl
-{"id":"ghi1","device":{"ifa":"38400000-8cf0-11bd-b23e-10b96e40000d","geo":{"lat":51.5101,"lon":-0.1182,"type":2}},"ext":{"correlation_id":"campaign-ifa-001","task_id":"campaign-ifa-001","timestamp":1742812341000}}
-{"id":"ghi2","device":{"ifa":"38400000-8cf0-11bd-b23e-10b96e40000d","geo":{"lat":51.5213,"lon":-0.1021,"type":2}},"ext":{"correlation_id":"campaign-ifa-001","task_id":"campaign-ifa-001","timestamp":1742812342000}}
-{"id":"ghi3","device":{"ifa":"38400000-8cf0-11bd-b23e-10b96e40000d","geo":{"lat":51.5334,"lon":-0.0983,"type":2}},"ext":{"correlation_id":"campaign-ifa-001","task_id":"campaign-ifa-001","timestamp":1742812343000}}
+{"id":"ghi1","device":{"ifa":"38400000-8cf0-11bd-b23e-10b96e40000d","geo":{"lat":51.5101,"lon":-0.1182,"type":2,"utcoffset":60}},"ext":{"correlation_id":"campaign-ifa-001","task_id":"campaign-ifa-001","ts":"2026-04-15T08:22:21.000+01:00"}}
+{"id":"ghi2","device":{"ifa":"38400000-8cf0-11bd-b23e-10b96e40000d","geo":{"lat":51.5213,"lon":-0.1021,"type":2,"utcoffset":60}},"ext":{"correlation_id":"campaign-ifa-001","task_id":"campaign-ifa-001","ts":"2026-04-15T08:22:22.000+01:00"}}
+{"id":"ghi3","device":{"ifa":"38400000-8cf0-11bd-b23e-10b96e40000d","geo":{"lat":51.5334,"lon":-0.0983,"type":2,"utcoffset":60}},"ext":{"correlation_id":"campaign-ifa-001","task_id":"campaign-ifa-001","ts":"2026-04-15T08:22:23.000+01:00"}}
 ```
 
 - `device.ifa` is identical in every request (the value provided when creating the task)
@@ -458,6 +472,8 @@ OUT_DIR=/app/data/output
 SCHEDULER_INTERVAL=5m
 MMDB_PATH=/app/data/GeoLite2-City.mmdb
 NOMINATIM_URL=https://nominatim.openstreetmap.org
+TZF_PORT=8082
+TZF_URL=http://tzf-server:8080
 TLS_CERT_PATH=./certs/server.crt
 TLS_KEY_PATH=./certs/server.key
 SFTP_HOST=

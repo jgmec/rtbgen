@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/google/uuid"
 	"github.com/oschwald/geoip2-golang"
 )
 
@@ -26,20 +27,43 @@ type Scheduler struct {
 	interval    time.Duration
 	mmdb        *geoip2.Reader
 	geocoder    *ReverseGeocoder
+	tzClient    *TimezoneClient
 	defaultSFTP *SFTPConfig
 	stop        chan struct{}
 }
 
-func NewScheduler(store *TaskStore, outDir string, interval time.Duration, mmdb *geoip2.Reader, geocoder *ReverseGeocoder, defaultSFTP *SFTPConfig) *Scheduler {
+func NewScheduler(store *TaskStore, outDir string, interval time.Duration, mmdb *geoip2.Reader, geocoder *ReverseGeocoder, tzClient *TimezoneClient, defaultSFTP *SFTPConfig) *Scheduler {
 	return &Scheduler{
 		store:       store,
 		outDir:      outDir,
 		interval:    interval,
 		mmdb:        mmdb,
 		geocoder:    geocoder,
+		tzClient:    tzClient,
 		defaultSFTP: defaultSFTP,
 		stop:        make(chan struct{}),
 	}
+}
+
+// enrichGeo applies reverse geocoding metadata and, when a timezone client is
+// configured, sets geo.UTCOffset from the IANA timezone at the request time t.
+func (sc *Scheduler) enrichGeo(geo *Geo, t time.Time) *Geo {
+	geo = sc.geocoder.Enrich(geo)
+	if geo == nil || sc.tzClient == nil {
+		return geo
+	}
+	tz := sc.tzClient.Timezone(geo.Lat, geo.Lon)
+	if tz == "" {
+		return geo
+	}
+	loc, err := time.LoadLocation(tz)
+	if err != nil {
+		return geo
+	}
+	out := *geo
+	_, offsetSecs := t.In(loc).Zone()
+	out.UTCOffset = offsetSecs / 60
+	return &out
 }
 
 // Start runs the scheduler loop. Call in a goroutine.
@@ -159,10 +183,16 @@ func (sc *Scheduler) generateForTask(task *Task, now time.Time) (string, error) 
 
 		for i := 0; i < task.Count; i++ {
 			t := time.Now()
-			req := generateRequestForTask(task, t.Add(-sc.interval), t, nil, "")
+			ts := randomTimestamp(t.Add(-sc.interval), t)
+			req := generateRequestForTask(task, ts, nil, "")
 			if geo != nil {
-				req.Device.Geo = sc.geocoder.Enrich(geo)
+				req.Device.Geo = sc.enrichGeo(geo, ts)
 			}
+			offsetMins := 0
+			if req.Device.Geo != nil {
+				offsetMins = req.Device.Geo.UTCOffset
+			}
+			req.Ext.(map[string]any)["ts"] = ts.In(time.FixedZone("", offsetMins*60)).Format(tsFormat)
 			line, err := json.Marshal(req)
 			if err != nil {
 				return "", fmt.Errorf("marshal request: %w", err)
@@ -251,7 +281,7 @@ func (sc *Scheduler) generateForDeviceTask(task *Task, w *bufio.Writer, now time
 		task.Devices = make(map[string]*Geo, task.Count)
 		if bb != nil {
 			for i := 0; i < task.Count; i++ {
-				task.Devices[randomID()] = generateGeoInBBox(bb)
+				task.Devices[uuid.New().String()] = generateGeoInBBox(bb)
 			}
 		} else {
 			anchor := task.LastGeo
@@ -259,7 +289,7 @@ func (sc *Scheduler) generateForDeviceTask(task *Task, w *bufio.Writer, now time
 				anchor = generateGeo()
 			}
 			for i := 0; i < task.Count; i++ {
-				task.Devices[randomID()] = generateGeoNear(anchor.Lat, anchor.Lon, 1.0)
+				task.Devices[uuid.New().String()] = generateGeoNear(anchor.Lat, anchor.Lon, 1.0)
 			}
 		}
 	}
@@ -299,10 +329,15 @@ func (sc *Scheduler) generateForDeviceTask(task *Task, w *bufio.Writer, now time
 	}
 
 	for _, ifa := range slots {
-		geo := sc.geocoder.Enrich(currentGeo[ifa])
 		t := time.Now()
-		req := generateRequestForTask(task, t.Add(-sc.interval), t, nil, ifa)
-		req.Device.Geo = geo
+		ts := randomTimestamp(t.Add(-sc.interval), t)
+		req := generateRequestForTask(task, ts, nil, ifa)
+		req.Device.Geo = sc.enrichGeo(currentGeo[ifa], ts)
+		offsetMins := 0
+		if req.Device.Geo != nil {
+			offsetMins = req.Device.Geo.UTCOffset
+		}
+		req.Ext.(map[string]any)["ts"] = ts.In(time.FixedZone("", offsetMins*60)).Format(tsFormat)
 		line, err := json.Marshal(req)
 		if err != nil {
 			return fmt.Errorf("marshal request: %w", err)
@@ -310,7 +345,7 @@ func (sc *Scheduler) generateForDeviceTask(task *Task, w *bufio.Writer, now time
 		w.Write(line)
 		w.WriteByte('\n')
 		// Walk the device's location for its next appearance (within this tick or next).
-		next := generateGeoNear(geo.Lat, geo.Lon, 1.0)
+		next := generateGeoNear(currentGeo[ifa].Lat, currentGeo[ifa].Lon, 1.0)
 		if bb != nil && (next.Lat < bb.MinLat || next.Lat > bb.MaxLat ||
 			next.Lon < bb.MinLon || next.Lon > bb.MaxLon) {
 			next = generateGeoInBBox(bb)
