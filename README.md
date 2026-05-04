@@ -6,15 +6,16 @@ A Go CLI tool and HTTP service for generating random [OpenRTB 2.5](https://www.i
 
 - Generates fully compliant OpenRTB 2.5 bid requests
 - Supports banner, video, audio, and native impression types
+- Realistic app generation — 33 templates across gaming, news, social, shopping, fitness, music, video, travel, and utilities with real bundle IDs, domains, IAB categories, and publisher names
 - Timestamps randomized within a configurable sliding window
 - HTTP service for managing long-running generation tasks
 - Persistent task storage (JSON file)
 - Background scheduler generating JSONL output for active tasks
 - Three geo criteria modes: IP address, IFA, or GeoJSON bounding box
-- IP-based geo lookup via MaxMind GeoIP2 MMDB
+- IP-based geo lookup via MaxMind GeoIP2 MMDB — used at task creation in server mode, and in CLI mode when `device.geo.type` is `2` (IP-based); populates lat/lon, country, city, region, and zip
 - Per-device geo pools for `ip` and `bbox` tasks — each device walks independently across ticks
 - Single walking location for `ifa` tasks — path persisted across ticks and server restarts
-- Reverse geocoding via Nominatim — enriches all generated geo points with city, country, region, and postcode
+- Reverse geocoding via Nominatim — enriches all generated geo points with city, country, region, and postcode; overwrites MaxMind address fields in scheduler output
 - Timezone-aware timestamps — `ext.ts` is an ISO 8601 string with the device's local UTC offset (millisecond precision), resolved via tzf-server
 - HTTPS support with TLS certificates
 - SFTP upload of tick output — per-task or global default; local files deleted after successful upload
@@ -47,6 +48,7 @@ Requires Go 1.23+.
 | `-pretty` | `true` | Pretty-print JSON output |
 | `-compact` | `false` | Compact JSON output (overrides `-pretty`) |
 | `-bbox` | | Bounding box filter: `maxlat,maxlon,minlat,minlon` |
+| `-mmdb` | | Path to MaxMind GeoIP2 City MMDB file — when set, requests where `device.geo.type` is `2` are enriched with real geo data for the device IP |
 | `-scheduler-interval` | `5m` | Time window for randomized timestamps |
 | `-examples` | `false` | Print example requests and exit |
 
@@ -66,7 +68,7 @@ Requires Go 1.23+.
 ./rtb-generator -count=20 -scheduler-interval=10m
 ```
 
-Each generated request includes an `ext.ts` field — an ISO 8601 timestamp with `+00:00` offset (CLI has no geo, so UTC is used), randomized within `[now - scheduler-interval, now]`. Example: `"2026-04-15T10:23:41.782+00:00"`.
+Each generated request includes an `ext.ts` field — an ISO 8601 timestamp with `+00:00` offset (CLI has no tzf-server, so UTC is used), randomized within `[now - scheduler-interval, now]`. Example: `"2026-04-15T10:23:41.782+00:00"`.
 
 ### CLI vs HTTP service
 
@@ -78,7 +80,7 @@ Each generated request includes an `ext.ts` field — an ISO 8601 timestamp with
 | IP address | random | pinned to task's `ip_address` (`ip` criteria) |
 | Geo | random or within `-bbox` | walking path persisted across ticks |
 | `-bbox` format | `maxlat,maxlon,minlat,minlon` | GeoJSON `Polygon` in request body |
-| `-mmdb` | parsed but unused | used to resolve IP coordinates at task creation |
+| `-mmdb` | enriches `device.geo` when `type=2` (IP-based); populates lat/lon, country, city, region, zip | used to resolve IP coordinates at task creation |
 | `ext` fields | `ts` only | `task_id`, `correlation_id`, `ts` |
 
 ## HTTP Service
@@ -199,9 +201,15 @@ If no SFTP is configured (neither global nor per-task), the zip is kept locally 
 
 ### MaxMind MMDB
 
-When `-mmdb` is provided, IP-criteria tasks look up the IP address coordinates from the MMDB at task creation time. The resolved coordinates become the starting point (`last_geo`) for location generation.
+Pass `-mmdb` to provide a MaxMind GeoIP2 City database. The MMDB is used in both modes:
 
-If the MMDB is not configured, or the IP is not found (e.g. private/reserved addresses), the service falls back to a random city location.
+**Server mode** — when an `ip`-criteria task is created, the task's `ip_address` is looked up in the MMDB. The resolved coordinates (lat, lon, country, city, region, zip) become `last_geo` — the anchor for the device pool and all subsequent location walking.
+
+**CLI mode** — each generated request whose `device.geo.type` is `2` (IP-based, ~1 in 3 requests) has its geo replaced with a real lookup of the device's randomly generated IP. The full set of available fields is populated: lat, lon, country, city, region (first subdivision), and zip.
+
+In both modes, if the MMDB is not configured or the IP is not found (e.g. private/reserved addresses), the code falls back to a random city location.
+
+**Address fields and Nominatim** — in server mode, MaxMind sets the initial address fields at task creation. After that, every scheduled tick re-derives city, country, region, and zip via Nominatim reverse geocoding of the walked coordinates. Nominatim always overwrites MaxMind's address fields in scheduler output; only the initial lat/lon anchor from MaxMind persists through the walk.
 
 Download a free database from [MaxMind GeoLite2](https://dev.maxmind.com/geoip/geolite2-free-geolocation-data).
 
