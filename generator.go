@@ -278,53 +278,87 @@ func generateSite() *Site {
 
 // App generation
 func generateApp() *App {
-	bundles := []string{
-		"com.example.app", "com.game.fun", "com.news.reader", "com.social.app",
-		"com.shopping.store", "com.fitness.tracker", "com.music.player", "com.video.streaming",
+	type appTemplate struct {
+		name      string
+		bundle    string
+		domain    string
+		cat       string
+		keywords  string
+		publisher string
 	}
-	categories := []string{
-		"IAB1",  // Arts & Entertainment
-		"IAB9",  // Hobbies & Interests
-		"IAB14", // Society
-		"IAB16", // Pets
-		"IAB17", // Sports
-		"IAB20", // Travel
-		"IAB24", // Uncategorized
+	templates := []appTemplate{
+		// Games
+		{"Pixel Dungeon Quest", "com.pixelstudio.dungeonquest", "pixelstudio.com", "IAB9-30", "gaming,rpg,dungeon,pixel", "Pixel Studio Games"},
+		{"Merge Island Escape", "com.tropiclab.mergeisland", "tropiclab.io", "IAB9-30", "gaming,casual,merge,puzzle", "Tropic Lab"},
+		{"Shadow Legends Strike", "com.darkforge.shadowstrike", "darkforge.gg", "IAB9-30", "gaming,action,rpg,fantasy", "Dark Forge Entertainment"},
+		{"Idle Farm Empire", "com.sunleaf.idlefarm", "sunleaf.games", "IAB9-30", "gaming,idle,farm,simulation", "Sunleaf Games"},
+		{"Block Blast Mania", "com.puzzlejoy.blockblast", "puzzlejoy.com", "IAB9-30", "gaming,puzzle,blocks,casual", "Puzzle Joy Ltd"},
+		{"Castle Defense Wars", "com.ironkeep.castledefense", "ironkeep.io", "IAB9-30", "gaming,strategy,defense,castle", "Iron Keep Studios"},
+		{"Word Storm Champions", "com.lexicraft.wordstorm", "lexicraft.com", "IAB9-30", "gaming,word,puzzle,educational", "LexiCraft"},
+		{"Turbo Race GT", "com.nitroworks.turborace", "nitroworks.io", "IAB9-30", "gaming,racing,cars,multiplayer", "Nitro Works"},
+		// News & Media
+		{"FlashNews Daily", "com.medianow.flashnews", "medianow.com", "IAB12", "news,breaking,daily,headlines", "Media Now Inc"},
+		{"PocketTribune", "com.tribemedia.pockettribune", "tribemedia.net", "IAB12", "news,politics,world,live", "Tribe Media Group"},
+		{"SportsBuzz Live", "com.sportsbuzz.live", "sportsbuzz.tv", "IAB17", "sports,news,live,scores", "SportsBuzz Media"},
+		{"Finance Pulse", "com.wealthtrack.financepulse", "wealthtrack.com", "IAB13", "finance,stocks,markets,investing", "WealthTrack"},
+		// Social & Messaging
+		{"SnapCircle", "com.circleapp.snapcircle", "snapcircle.app", "IAB14", "social,messaging,friends,sharing", "Circle App Co"},
+		{"BondChat", "com.bondlabs.bondchat", "bondlabs.io", "IAB14", "social,chat,video,messaging", "Bond Labs"},
+		{"CrowdVibe", "com.vibetech.crowdvibe", "crowdvibe.app", "IAB14", "social,community,events,local", "VibeTech"},
+		// Shopping & Deals
+		{"DealHunter Pro", "com.savvybyte.dealhunter", "dealhunter.io", "IAB22", "shopping,deals,coupons,savings", "Savvy Byte Apps"},
+		{"StyleCart", "com.fashionloop.stylecart", "stylecart.com", "IAB22", "shopping,fashion,clothing,style", "FashionLoop"},
+		{"GroceryDash", "com.freshroute.grocerydash", "grocerydash.app", "IAB22", "shopping,grocery,delivery,food", "Fresh Route Inc"},
+		// Health & Fitness
+		{"FitSprint Coach", "com.motionlab.fitsprint", "motionlab.fit", "IAB7", "fitness,workout,coach,health", "Motion Lab"},
+		{"ZenMind Meditation", "com.quietpath.zenmind", "quietpath.app", "IAB7", "health,meditation,mindfulness,sleep", "Quiet Path"},
+		{"CalTrack Nutrition", "com.nutricore.caltrack", "nutricore.io", "IAB7", "health,nutrition,calories,diet", "NutriCore"},
+		// Music & Audio
+		{"BeatWave Music", "com.waveform.beatwave", "beatwave.fm", "IAB1-6", "music,streaming,beats,playlist", "Waveform Audio"},
+		{"PodcastVault", "com.audioworks.podcastvault", "podcastvault.fm", "IAB1-6", "podcasts,audio,radio,talk", "AudioWorks"},
+		{"TuneBox Radio", "com.radiosync.tunebox", "tunebox.app", "IAB1-6", "music,radio,stations,live", "RadioSync"},
+		// Video & Entertainment
+		{"StreamFlick", "com.flicknet.streamflick", "streamflick.tv", "IAB1", "video,streaming,movies,tv", "FlickNet"},
+		{"ClipReel Short Video", "com.reelco.clipreel", "clipreel.app", "IAB1", "video,shorts,clips,viral", "Reel Co"},
+		{"LiveStage Events", "com.stagenet.livestage", "livestage.tv", "IAB1", "video,live,events,concerts", "StageNet"},
+		// Travel
+		{"WanderMap Travel", "com.roamtech.wandermap", "wandermap.app", "IAB20", "travel,maps,explore,trips", "Roam Tech"},
+		{"HotelDirect Booking", "com.stayvault.hoteldirect", "hoteldirect.com", "IAB20", "travel,hotels,booking,vacation", "StayVault"},
+		{"FlightAlert Pro", "com.skywatch.flightalert", "flightalert.io", "IAB20", "travel,flights,deals,alerts", "SkyWatch"},
+		// Utilities
+		{"VaultKeeper Password", "com.securebit.vaultkeeper", "securebit.io", "IAB19", "utilities,security,password,privacy", "SecureBit"},
+		{"CleanBoost Pro", "com.cleantech.cleanboost", "cleanboost.app", "IAB19", "utilities,cleaner,booster,storage", "CleanTech Apps"},
+		{"ScanDoc Scanner", "com.docusnap.scandoc", "docusnap.io", "IAB19", "utilities,scanner,pdf,documents", "DocuSnap"},
 	}
 
-	bundle := randomChoice(bundles)
+	tmpl := templates[rand.Intn(len(templates))]
 	storeType := randomChoice([]string{"play", "itunes"})
 
 	var storeURL string
 	if storeType == "play" {
-		storeURL = fmt.Sprintf("https://play.google.com/store/apps/details?id=%s", bundle)
+		storeURL = fmt.Sprintf("https://play.google.com/store/apps/details?id=%s", tmpl.bundle)
 	} else {
 		storeURL = fmt.Sprintf("https://apps.apple.com/app/id%d", rand.Intn(1000000000))
 	}
 
 	app := &App{
 		ID:       randomID(),
-		Name:     "Sample App",
-		Bundle:   bundle,
-		Domain:   "example.com",
-		Cat:      []string{randomChoice(categories)},
+		Name:     tmpl.name,
+		Bundle:   tmpl.bundle,
+		Domain:   tmpl.domain,
+		Cat:      []string{tmpl.cat},
 		StoreURL: storeURL,
-		Ver:      fmt.Sprintf("%d.%d.%d", randomInt(1, 5), randomInt(0, 9), randomInt(0, 9)),
+		Ver:      fmt.Sprintf("%d.%d.%d", randomInt(1, 8), randomInt(0, 15), randomInt(0, 9)),
 		Publisher: &Publisher{
 			ID:   randomID(),
-			Name: "App Publisher",
+			Name: tmpl.publisher,
 		},
 		PrivacyPolicy: 1,
 		Paid:          randomInt(0, 1),
 	}
 
 	if randomBool() {
-		app.Keywords = randomChoice([]string{
-			"gaming,casual,puzzle",
-			"news,breaking,live",
-			"social,messaging,friends",
-			"shopping,deals,fashion",
-		})
+		app.Keywords = tmpl.keywords
 	}
 
 	return app
