@@ -3,10 +3,37 @@ package main
 import (
 	"encoding/json"
 	"fmt"
+	"net"
 	"net/http"
 	"sync"
 	"time"
+
+	"github.com/oschwald/geoip2-golang"
 )
+
+func lookupIPGeo(mmdb *geoip2.Reader, ipStr string) *Geo {
+	if mmdb != nil {
+		ip := net.ParseIP(ipStr)
+		if ip != nil {
+			if record, err := mmdb.City(ip); err == nil &&
+				(record.Location.Latitude != 0 || record.Location.Longitude != 0) {
+				geo := &Geo{
+					Lat:     record.Location.Latitude,
+					Lon:     record.Location.Longitude,
+					Country: record.Country.IsoCode,
+					City:    record.City.Names["en"],
+					Zip:     record.Postal.Code,
+					Type:    2,
+				}
+				if len(record.Subdivisions) > 0 {
+					geo.Region = record.Subdivisions[0].IsoCode
+				}
+				return geo
+			}
+		}
+	}
+	return generateGeo()
+}
 
 // ReverseGeocoder enriches Geo objects with city/country/region metadata using
 // the Nominatim reverse geocoding API. Results are cached by rounded coordinates

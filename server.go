@@ -3,7 +3,6 @@ package main
 import (
 	"encoding/json"
 	"fmt"
-	"net"
 	"net/http"
 	"time"
 
@@ -119,22 +118,7 @@ func (s *Server) resolveInitialGeo(criteriaType CriteriaType, ipAddress string) 
 }
 
 func (s *Server) lookupIPGeo(ipStr string) *Geo {
-	if s.mmdb != nil {
-		ip := net.ParseIP(ipStr)
-		if ip != nil {
-			if record, err := s.mmdb.City(ip); err == nil &&
-				(record.Location.Latitude != 0 || record.Location.Longitude != 0) {
-				return &Geo{
-					Lat:     record.Location.Latitude,
-					Lon:     record.Location.Longitude,
-					Country: record.Country.IsoCode,
-					City:    record.City.Names["en"],
-					Type:    2,
-				}
-			}
-		}
-	}
-	return generateGeo()
+	return lookupIPGeo(s.mmdb, ipStr)
 }
 
 func (s *Server) deleteTask(w http.ResponseWriter, r *http.Request) {

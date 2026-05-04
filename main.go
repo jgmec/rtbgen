@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
 	"github.com/oschwald/geoip2-golang"
 )
 
@@ -85,9 +86,24 @@ func main() {
 		config.BoundingBox = bb
 	}
 
+	var mmdb *geoip2.Reader
+	if *mmdbPath != "" {
+		var err error
+		mmdb, err = geoip2.Open(*mmdbPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "open mmdb: %v\n", err)
+			os.Exit(1)
+		}
+		defer mmdb.Close()
+	}
+
 	for i := 0; i < *count; i++ {
 		now := time.Now()
 		req := GenerateRandomBidRequestWithConfig(*requestType, *impType, config)
+		if mmdb != nil && req.Device != nil && req.Device.Geo != nil && req.Device.Geo.Type == 2 {
+			req.Device.Geo = lookupIPGeo(mmdb, req.Device.IP)
+			req.Device.Geo.Type = 2
+		}
 		ts := randomTimestamp(now.Add(-*schedulerInterval), now)
 		req.Ext = map[string]any{"ts": ts.In(time.FixedZone("", 0)).Format(tsFormat)}
 		printJSON(req)

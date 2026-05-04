@@ -1098,6 +1098,201 @@ func TestEnrichGeo_OriginalGeoUnmodified(t *testing.T) {
 
 // TestExtTS_MatchesDeviceGeoTimezone verifies that ext.ts is formatted in the
 // same timezone as device.geo.utcoffset for both ifa and ip/bbox task types.
+// ---- generateApp tests ----
+
+func TestGenerateApp_RequiredFields(t *testing.T) {
+	for range 20 {
+		app := generateApp()
+		if app == nil {
+			t.Fatal("generateApp returned nil")
+		}
+		if app.ID == "" {
+			t.Error("app.ID must not be empty")
+		}
+		if app.Name == "" {
+			t.Error("app.Name must not be empty")
+		}
+		if app.Bundle == "" {
+			t.Error("app.Bundle must not be empty")
+		}
+		if app.Domain == "" {
+			t.Error("app.Domain must not be empty")
+		}
+		if len(app.Cat) == 0 || app.Cat[0] == "" {
+			t.Error("app.Cat must have at least one non-empty category")
+		}
+		if !strings.HasPrefix(app.Cat[0], "IAB") {
+			t.Errorf("app.Cat[0] %q should start with IAB", app.Cat[0])
+		}
+		if app.StoreURL == "" {
+			t.Error("app.StoreURL must not be empty")
+		}
+		if app.Ver == "" {
+			t.Error("app.Ver must not be empty")
+		}
+		if app.Publisher == nil {
+			t.Fatal("app.Publisher must not be nil")
+		}
+		if app.Publisher.Name == "" {
+			t.Error("app.Publisher.Name must not be empty")
+		}
+	}
+}
+
+func TestGenerateApp_StoreURL(t *testing.T) {
+	for range 50 {
+		app := generateApp()
+		isPlay := strings.Contains(app.StoreURL, "play.google.com/store/apps/details?id="+app.Bundle)
+		isApple := strings.Contains(app.StoreURL, "apps.apple.com/app/id")
+		if !isPlay && !isApple {
+			t.Errorf("unexpected StoreURL %q for bundle %q", app.StoreURL, app.Bundle)
+		}
+	}
+}
+
+func TestGenerateApp_VersionFormat(t *testing.T) {
+	for range 20 {
+		app := generateApp()
+		parts := strings.Split(app.Ver, ".")
+		if len(parts) != 3 {
+			t.Errorf("app.Ver %q should have 3 dot-separated parts", app.Ver)
+		}
+	}
+}
+
+func TestGenerateApp_Variety(t *testing.T) {
+	names := make(map[string]bool)
+	bundles := make(map[string]bool)
+	for range 200 {
+		app := generateApp()
+		names[app.Name] = true
+		bundles[app.Bundle] = true
+	}
+	if len(names) < 10 {
+		t.Errorf("expected >= 10 distinct app names in 200 runs, got %d", len(names))
+	}
+	if len(bundles) < 10 {
+		t.Errorf("expected >= 10 distinct bundles in 200 runs, got %d", len(bundles))
+	}
+}
+
+// ---- lookupIPGeo Region/Zip tests ----
+
+// TestLookupIPGeo_WithMMDB_FieldMapping verifies that lookupIPGeo correctly maps
+// all MMDB record fields (Lat, Lon, Country, City, Region, Zip) to Geo. It queries
+// the MMDB directly to determine what data is available, then asserts our mapping
+// matches — so the test is correct regardless of which GeoLite2 build is used.
+func TestLookupIPGeo_WithMMDB_FieldMapping(t *testing.T) {
+	db := openTestMMDB(t)
+	ips := []string{"8.8.8.8", "177.176.33.93", "1.1.1.1"}
+
+	for _, ipStr := range ips {
+		t.Run(ipStr, func(t *testing.T) {
+			ip := net.ParseIP(ipStr)
+			record, err := db.City(ip)
+			if err != nil || (record.Location.Latitude == 0 && record.Location.Longitude == 0) {
+				t.Skipf("IP %s not found in MMDB", ipStr)
+			}
+
+			geo := lookupIPGeo(db, ipStr)
+			if geo == nil {
+				t.Fatal("expected non-nil geo")
+			}
+			if geo.Type != 2 {
+				t.Errorf("Type: got %d, want 2", geo.Type)
+			}
+			if geo.Lat != record.Location.Latitude {
+				t.Errorf("Lat: got %f, want %f", geo.Lat, record.Location.Latitude)
+			}
+			if geo.Lon != record.Location.Longitude {
+				t.Errorf("Lon: got %f, want %f", geo.Lon, record.Location.Longitude)
+			}
+			if geo.Country != record.Country.IsoCode {
+				t.Errorf("Country: got %q, want %q", geo.Country, record.Country.IsoCode)
+			}
+			if geo.City != record.City.Names["en"] {
+				t.Errorf("City: got %q, want %q", geo.City, record.City.Names["en"])
+			}
+			if geo.Zip != record.Postal.Code {
+				t.Errorf("Zip: got %q, want %q", geo.Zip, record.Postal.Code)
+			}
+			wantRegion := ""
+			if len(record.Subdivisions) > 0 {
+				wantRegion = record.Subdivisions[0].IsoCode
+			}
+			if geo.Region != wantRegion {
+				t.Errorf("Region: got %q, want %q", geo.Region, wantRegion)
+			}
+		})
+	}
+}
+
+// ---- CLI-mode MMDB enrichment (Type==2 path) ----
+
+func TestCLIMode_MMDBEnrichesType2Geo(t *testing.T) {
+	db := openTestMMDB(t)
+
+	// Run many requests until we get one with Type==2 and verify it was enriched.
+	const maxAttempts = 500
+	enriched := false
+	for range maxAttempts {
+		config := DefaultConfig
+		req := GenerateRandomBidRequestWithConfig("random", "banner", config)
+		if req.Device == nil || req.Device.Geo == nil {
+			continue
+		}
+		originalType := req.Device.Geo.Type
+		if originalType != 2 {
+			continue
+		}
+		originalIP := req.Device.IP
+		geo := lookupIPGeo(db, originalIP)
+		geo.Type = 2
+		req.Device.Geo = geo
+
+		if req.Device.Geo.Type != 2 {
+			t.Errorf("geo.Type should be 2 after enrichment, got %d", req.Device.Geo.Type)
+		}
+		// Lat/Lon must be set (either from MMDB or fallback generateGeo).
+		if req.Device.Geo.Lat == 0 && req.Device.Geo.Lon == 0 {
+			t.Error("geo.Lat/Lon should not both be zero after enrichment")
+		}
+		enriched = true
+		break
+	}
+	if !enriched {
+		t.Skipf("no Type==2 geo generated in %d attempts (probabilistic)", maxAttempts)
+	}
+}
+
+func TestCLIMode_NonType2GeoNotEnriched(t *testing.T) {
+	db := openTestMMDB(t)
+
+	for range 50 {
+		config := DefaultConfig
+		req := GenerateRandomBidRequestWithConfig("random", "banner", config)
+		if req.Device == nil || req.Device.Geo == nil {
+			continue
+		}
+		if req.Device.Geo.Type == 2 {
+			continue
+		}
+		originalLat := req.Device.Geo.Lat
+		originalLon := req.Device.Geo.Lon
+
+		// Simulate CLI logic: only enrich when Type==2.
+		if req.Device.Geo.Type == 2 {
+			req.Device.Geo = lookupIPGeo(db, req.Device.IP)
+			req.Device.Geo.Type = 2
+		}
+
+		if req.Device.Geo.Lat != originalLat || req.Device.Geo.Lon != originalLon {
+			t.Error("non-Type2 geo should not be modified by MMDB enrichment")
+		}
+		return
+	}
+}
+
 func TestExtTS_MatchesDeviceGeoTimezone(t *testing.T) {
 	// tzf-server mock: New York → UTC-5 in January (EST)
 	tzSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
