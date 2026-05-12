@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/json"
-	"fmt"
 	"io"
 	"os"
 	"testing"
@@ -28,7 +27,7 @@ func TestPrintJSON_Pretty(t *testing.T) {
 		t.Errorf("output is not valid JSON: %s", out)
 	}
 	// Pretty output contains newlines beyond a single-line compact form.
-	compact := fmt.Sprintf(`{"key":"val"}`) + "\n"
+	compact := `{"key":"val"}` + "\n"
 	if out == compact {
 		t.Error("expected indented output in pretty mode")
 	}
