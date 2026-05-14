@@ -37,14 +37,15 @@ func lookupIPGeo(mmdb *geoip2.Reader, ipStr string) *Geo {
 
 // ReverseGeocoder enriches Geo objects with city/country/region metadata using
 // the Nominatim reverse geocoding API. Results are cached by rounded coordinates
-// (~1 km grid cells). Requests are rate-limited to 1 per second per Nominatim's
-// usage policy.
+// (~1 km grid cells). minDelay controls the minimum gap between consecutive HTTP
+// calls; use 1s for the public Nominatim instance, 0 for self-hosted.
 type ReverseGeocoder struct {
 	baseURL  string
+	minDelay time.Duration
 	client   *http.Client
 	cache    map[string]*geoMeta
 	cacheMu  sync.RWMutex // guards cache reads and writes
-	rateMu   sync.Mutex   // held across sleep + HTTP call; enforces 1 req/s
+	rateMu   sync.Mutex   // held across sleep + HTTP call; serialises requests
 	lastCall time.Time
 }
 
@@ -67,11 +68,12 @@ type nominatimResponse struct {
 	} `json:"address"`
 }
 
-func NewReverseGeocoder(baseURL string) *ReverseGeocoder {
+func NewReverseGeocoder(baseURL string, minDelay time.Duration) *ReverseGeocoder {
 	return &ReverseGeocoder{
-		baseURL: baseURL,
-		client:  &http.Client{Timeout: 5 * time.Second},
-		cache:   make(map[string]*geoMeta),
+		baseURL:  baseURL,
+		minDelay: minDelay,
+		client:   &http.Client{Timeout: 5 * time.Second},
+		cache:    make(map[string]*geoMeta),
 	}
 }
 
@@ -105,8 +107,10 @@ func (g *ReverseGeocoder) Enrich(geo *Geo) *Geo {
 	}
 	g.cacheMu.RUnlock()
 
-	if wait := time.Second - time.Since(g.lastCall); wait > 0 {
-		time.Sleep(wait)
+	if g.minDelay > 0 {
+		if wait := g.minDelay - time.Since(g.lastCall); wait > 0 {
+			time.Sleep(wait)
+		}
 	}
 	g.lastCall = time.Now()
 	meta := g.lookup(geo.Lat, geo.Lon)

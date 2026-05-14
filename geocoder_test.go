@@ -32,7 +32,7 @@ func TestReverseGeocoder_Enrich_NilGeocoder(t *testing.T) {
 }
 
 func TestReverseGeocoder_Enrich_NilGeo(t *testing.T) {
-	g := NewReverseGeocoder("http://localhost")
+	g := NewReverseGeocoder("http://localhost", 0)
 	if got := g.Enrich(nil); got != nil {
 		t.Error("nil geo should return nil")
 	}
@@ -42,7 +42,7 @@ func TestReverseGeocoder_Enrich_City(t *testing.T) {
 	srv := httptest.NewServer(nominatimHandler("London", "", "", "England", "gb", "SW1A"))
 	defer srv.Close()
 
-	g := NewReverseGeocoder(srv.URL)
+	g := NewReverseGeocoder(srv.URL, 0)
 	geo := &Geo{Lat: 51.50, Lon: -0.12}
 	out := g.Enrich(geo)
 
@@ -68,7 +68,7 @@ func TestReverseGeocoder_Enrich_FallbackTownThenVillage(t *testing.T) {
 	// No city — should fall back to town.
 	srv := httptest.NewServer(nominatimHandler("", "Smalltown", "", "County", "us", "12345"))
 	defer srv.Close()
-	g := NewReverseGeocoder(srv.URL)
+	g := NewReverseGeocoder(srv.URL, 0)
 	out := g.Enrich(&Geo{Lat: 40.00, Lon: -75.00})
 	if out.City != "Smalltown" {
 		t.Errorf("expected town fallback, got %q", out.City)
@@ -77,7 +77,7 @@ func TestReverseGeocoder_Enrich_FallbackTownThenVillage(t *testing.T) {
 	// No city or town — should fall back to village.
 	srv2 := httptest.NewServer(nominatimHandler("", "", "Hamlet", "State", "de", "10115"))
 	defer srv2.Close()
-	g2 := NewReverseGeocoder(srv2.URL)
+	g2 := NewReverseGeocoder(srv2.URL, 0)
 	out2 := g2.Enrich(&Geo{Lat: 52.52, Lon: 13.40})
 	if out2.City != "Hamlet" {
 		t.Errorf("expected village fallback, got %q", out2.City)
@@ -92,7 +92,7 @@ func TestReverseGeocoder_Enrich_Cache(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := NewReverseGeocoder(srv.URL)
+	g := NewReverseGeocoder(srv.URL, 0)
 	geo := &Geo{Lat: 48.86, Lon: 2.35}
 
 	g.Enrich(geo)
@@ -110,7 +110,7 @@ func TestReverseGeocoder_Enrich_HTTPError(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := NewReverseGeocoder(srv.URL)
+	g := NewReverseGeocoder(srv.URL, 0)
 	geo := &Geo{Lat: 10.00, Lon: 20.00, City: "original"}
 	out := g.Enrich(geo)
 	// Invalid JSON body after 500 — city should remain empty (not "original") because
@@ -126,7 +126,7 @@ func TestReverseGeocoder_Enrich_InvalidJSON(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := NewReverseGeocoder(srv.URL)
+	g := NewReverseGeocoder(srv.URL, 0)
 	geo := &Geo{Lat: 11.00, Lon: 22.00}
 	out := g.Enrich(geo)
 	if out == nil {
@@ -145,7 +145,7 @@ func TestReverseGeocoder_Enrich_RateLimit(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	g := NewReverseGeocoder(srv.URL)
+	g := NewReverseGeocoder(srv.URL, time.Second)
 	// Force lastCall to now so the next Enrich must wait ~1s.
 	g.lastCall = time.Now()
 
