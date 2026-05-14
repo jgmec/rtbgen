@@ -9,6 +9,7 @@
 - criteria - one of IP address, IFA, bounding box ( max lat , max lon, min lat, min lon )
 - task correlation id
 - number of rtb requests
+- optionally in server mode application should accept list of additional criterias with criteria type and value
 - application should persists all task requests
 - application should generate each five minutes rtb requests for all running tasks ( all tasks for whichh current timestamp is between start time and end time) and save them to a file as json lines
 - application should add files generated in last run into a zip file and remove jsonl files

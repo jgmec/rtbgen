@@ -13,6 +13,7 @@ A Go CLI tool and HTTP service for generating random [OpenRTB 2.5](https://www.i
 - Background scheduler generating JSONL output for active tasks
 - Three geo criteria modes: IP address, IFA, or GeoJSON bounding box
 - IP-based geo lookup via MaxMind GeoIP2 MMDB — used at task creation in server mode, and in CLI mode when `device.geo.type` is `2` (IP-based); populates lat/lon, country, city, region, and zip
+- Realistic device IP generation — at startup the MMDB is scanned to build a country-keyed index of IPv4 CIDR ranges; every generated request picks an IP from a range that matches the device's geo country, making `device.ip` consistent with `device.geo`
 - Per-device geo pools for `ip` and `bbox` tasks — each device walks independently across ticks
 - Single walking location for `ifa` tasks — path persisted across ticks and server restarts
 - Reverse geocoding via Nominatim — enriches all generated geo points with city, country, region, and postcode; overwrites MaxMind address fields in scheduler output
@@ -77,10 +78,10 @@ Each generated request includes an `ext.ts` field — an ISO 8601 timestamp with
 | Output | stdout (pretty or compact JSON) | JSONL files in `-out-dir` |
 | Task system | none — one-shot generation | persistent tasks with scheduler |
 | IFA | random per request | persistent device pool (`ip`/`bbox`) or fixed (`ifa`) |
-| IP address | random | pinned to task's `ip_address` (`ip` criteria) |
+| IP address | from country-matching CIDR range (requires `-mmdb`), otherwise random | pinned to task's `ip_address` (`ip` criteria); `ifa`/`bbox` devices get IPs from country-matching CIDR ranges |
 | Geo | random or within `-bbox` | walking path persisted across ticks |
 | `-bbox` format | `maxlat,maxlon,minlat,minlon` | GeoJSON `Polygon` in request body |
-| `-mmdb` | enriches `device.geo` when `type=2` (IP-based); populates lat/lon, country, city, region, zip | used to resolve IP coordinates at task creation |
+| `-mmdb` | (1) enriches `device.geo` when `type=2`; (2) builds IP index — all device IPs drawn from country-matching CIDR ranges | (1) resolves IP coordinates at task creation; (2) builds IP index — all device IPs drawn from country-matching CIDR ranges |
 | `ext` fields | `ts` only | `task_id`, `correlation_id`, `ts` |
 
 ## HTTP Service
@@ -201,13 +202,27 @@ If no SFTP is configured (neither global nor per-task), the zip is kept locally 
 
 ### MaxMind MMDB
 
-Pass `-mmdb` to provide a MaxMind GeoIP2 City database. The MMDB is used in both modes:
+Pass `-mmdb` to provide a MaxMind GeoIP2 City database. When configured, the MMDB is used for two independent purposes:
+
+#### 1. IP index — realistic device IP addresses
+
+At startup the MMDB is scanned once to build a country-keyed index of IPv4 CIDR ranges. For every generated request the device IP is drawn from a CIDR range that matches `device.geo.country`, so `device.ip` is consistent with the geo location rather than a random globally-routed address. The startup log reports how many countries were indexed:
+
+```
+IP index built: 251 countries
+```
+
+When the MMDB is not configured, or no ranges are found for a country, the device IP falls back to a fully random IPv4.
+
+For `ip`-criteria tasks the device IP is always pinned to `task.ip_address` regardless of the index.
+
+#### 2. Geo resolution from IP address
 
 **Server mode** — when an `ip`-criteria task is created, the task's `ip_address` is looked up in the MMDB. The resolved coordinates (lat, lon, country, city, region, zip) become `last_geo` — the anchor for the device pool and all subsequent location walking.
 
-**CLI mode** — each generated request whose `device.geo.type` is `2` (IP-based, ~1 in 3 requests) has its geo replaced with a real lookup of the device's randomly generated IP. The full set of available fields is populated: lat, lon, country, city, region (first subdivision), and zip.
+**CLI mode** — each generated request whose `device.geo.type` is `2` (IP-based, ~1 in 3 requests) has its geo replaced with a real lookup of the device's randomly generated IP. All available fields are populated: lat, lon, country, city, region (first subdivision), and zip.
 
-In both modes, if the MMDB is not configured or the IP is not found (e.g. private/reserved addresses), the code falls back to a random city location.
+If the MMDB is not configured or the IP is not found (e.g. private/reserved addresses), a random city location is used instead.
 
 **Address fields and Nominatim** — in server mode, MaxMind sets the initial address fields at task creation. After that, every scheduled tick re-derives city, country, region, and zip via Nominatim reverse geocoding of the walked coordinates. Nominatim always overwrites MaxMind's address fields in scheduler output; only the initial lat/lon anchor from MaxMind persists through the walk.
 

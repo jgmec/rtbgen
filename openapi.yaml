@@ -28,6 +28,12 @@ paths:
         immediately: for `ip` criteria it is looked up from the MaxMind MMDB (if
         configured), for `ifa` it is a random city, and for `bbox` it is left empty
         (devices are placed on the first scheduler tick).
+
+        When the server is started with `-mmdb`, a country-keyed index of IPv4 CIDR
+        ranges is built at startup. Every generated `device.ip` is then drawn from a
+        CIDR range matching `device.geo.country`, making the IP geographically
+        consistent with the location. For `ip`-criteria tasks the device IP is always
+        pinned to `ip_address` regardless of the index.
       requestBody:
         required: true
         content:
@@ -225,9 +231,12 @@ components:
     Geo:
       type: object
       description: >
-        Device geographic location. Fields are populated from the MaxMind MMDB at
-        task creation (for `ip` criteria) and then overwritten by Nominatim reverse
-        geocoding on each scheduler tick (if `-nominatim-url` is configured).
+        Device geographic location. For `ip`-criteria tasks, fields are initially
+        populated from the MaxMind MMDB at task creation. On every subsequent
+        scheduler tick, city, country, region, and zip are overwritten by Nominatim
+        reverse geocoding of the walked coordinates (if `-nominatim-url` is
+        configured). The device `ip` field is drawn from a CIDR range matching
+        `country` when the MMDB IP index is available.
       properties:
         lat:
           type: number
@@ -243,7 +252,9 @@ components:
           enum: [1, 2, 3]
         country:
           type: string
-          description: ISO 3166-1 alpha-2 country code (e.g. `US`)
+          description: >
+            ISO 3166-1 alpha-2 country code (e.g. `US`). Also used as the key
+            for selecting a realistic device IP from the MMDB CIDR index.
         region:
           type: string
           description: ISO 3166-2 region/subdivision code (e.g. `FL`)

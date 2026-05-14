@@ -19,6 +19,7 @@ type GeneratorConfig struct {
 	TestMode       bool
 	BoundingBox    *BoundingBox // nil = use random city geo
 	NearGeo        *Geo         // if set, generate geo within 1 km of this point
+	IPIndex        *IPIndex     // if set, device IPs are drawn from country-matching CIDR ranges
 }
 
 // Default configuration
@@ -393,7 +394,7 @@ func generateDevice(config GeneratorConfig) *Device {
 		Geo:            geo,
 		DNT:            randomInt(0, 1),
 		Lmt:            randomInt(0, 1),
-		IP:             fmt.Sprintf("%d.%d.%d.%d", randomInt(1, 255), randomInt(1, 255), randomInt(1, 255), randomInt(1, 255)),
+		IP:             config.IPIndex.RandomIP(geo.Country),
 		DeviceType:     randomInt(1, 7), // 1=Mobile/Tablet, 2=PC, 3=Connected TV, 4=Phone, 5=Tablet, 6=Connected Device, 7=Set Top Box
 		Make:           make,
 		Model:          fmt.Sprintf("Model-%d", rand.Intn(20)),
@@ -453,16 +454,16 @@ func generateGeo() *Geo {
 		lon     float64
 		zip     string
 	}{
-		{"Los Angeles", "CA", "USA", 34.0522, -118.2437, "90001"},
-		{"New York", "NY", "USA", 40.7128, -74.0060, "10001"},
-		{"Chicago", "IL", "USA", 41.8781, -87.6298, "60601"},
-		{"Houston", "TX", "USA", 29.7604, -95.3698, "77001"},
-		{"Phoenix", "AZ", "USA", 33.4484, -112.0740, "85001"},
-		{"London", "ENG", "GBR", 51.5074, -0.1278, "SW1A"},
-		{"Paris", "IDF", "FRA", 48.8566, 2.3522, "75001"},
-		{"Berlin", "BE", "DEU", 52.5200, 13.4050, "10115"},
-		{"Tokyo", "13", "JPN", 35.6762, 139.6503, "100-0001"},
-		{"Sydney", "NSW", "AUS", -33.8688, 151.2093, "2000"},
+		{"Los Angeles", "CA", "US", 34.0522, -118.2437, "90001"},
+		{"New York", "NY", "US", 40.7128, -74.0060, "10001"},
+		{"Chicago", "IL", "US", 41.8781, -87.6298, "60601"},
+		{"Houston", "TX", "US", 29.7604, -95.3698, "77001"},
+		{"Phoenix", "AZ", "US", 33.4484, -112.0740, "85001"},
+		{"London", "ENG", "GB", 51.5074, -0.1278, "SW1A"},
+		{"Paris", "IDF", "FR", 48.8566, 2.3522, "75001"},
+		{"Berlin", "BE", "DE", 52.5200, 13.4050, "10115"},
+		{"Tokyo", "13", "JP", 35.6762, 139.6503, "100-0001"},
+		{"Sydney", "NSW", "AU", -33.8688, 151.2093, "2000"},
 	}
 
 	city := cities[rand.Intn(len(cities))]
@@ -622,8 +623,9 @@ func generateGeoInBBox(bbox *BoundingBox) *Geo {
 
 // generateRequestForTask creates a BidRequest tailored to a task's criteria,
 // with a random timestamp in [windowStart, windowEnd).
-func generateRequestForTask(task *Task, ts time.Time, baseGeo *Geo, deviceIFA string) *BidRequest {
+func generateRequestForTask(task *Task, ts time.Time, baseGeo *Geo, deviceIFA string, ipIndex *IPIndex) *BidRequest {
 	config := DefaultConfig
+	config.IPIndex = ipIndex
 	switch task.CriteriaType {
 	case CriteriaBBox:
 		if task.Geometry != nil {

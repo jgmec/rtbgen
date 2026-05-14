@@ -1,9 +1,13 @@
 services:
   tzf-server:
     image: ringsaturn/tzf-server:v0.13.6
+    hostname: tzf-server
+    container_name: tzf-server
     ports:
       - "${TZF_PORT}:8080"
     restart: unless-stopped
+    networks: 
+      - rtbgen-network
 
   rtbgen:
     build: .
@@ -35,3 +39,11 @@ services:
       - tzf-server
     extra_hosts:
       - "host.docker.internal:host-gateway"
+    networks: 
+      - rtbgen-network
+
+
+
+networks:
+  rtbgen-network:
+    driver: bridge

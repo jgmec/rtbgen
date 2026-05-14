@@ -95,6 +95,13 @@ func main() {
 			os.Exit(1)
 		}
 		defer mmdb.Close()
+
+		ipIndex, err := BuildIPIndex(*mmdbPath)
+		if err != nil {
+			fmt.Fprintf(os.Stderr, "build IP index: %v\n", err)
+			os.Exit(1)
+		}
+		config.IPIndex = ipIndex
 	}
 
 	for i := 0; i < *count; i++ {
@@ -126,6 +133,15 @@ func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, 
 		log.Printf("MaxMind MMDB loaded: %s", mmdbPath)
 	}
 
+	var ipIndex *IPIndex
+	if mmdbPath != "" {
+		ipIndex, err = BuildIPIndex(mmdbPath)
+		if err != nil {
+			log.Fatalf("build IP index: %v", err)
+		}
+		log.Printf("IP index built: %d countries", ipIndex.CountryCount())
+	}
+
 	var geocoder *ReverseGeocoder
 	if nominatimURL != "" {
 		geocoder = NewReverseGeocoder(nominatimURL)
@@ -138,7 +154,7 @@ func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, 
 		log.Printf("timezone lookup enabled: %s", tzfURL)
 	}
 
-	scheduler := NewScheduler(store, outDir, schedulerInterval, mmdb, geocoder, tzClient, defaultSFTP)
+	scheduler := NewScheduler(store, outDir, schedulerInterval, mmdb, geocoder, tzClient, defaultSFTP, ipIndex)
 	go scheduler.Start()
 
 	srv := NewServer(store, mmdb)

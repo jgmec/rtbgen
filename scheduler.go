@@ -29,10 +29,11 @@ type Scheduler struct {
 	geocoder    *ReverseGeocoder
 	tzClient    *TimezoneClient
 	defaultSFTP *SFTPConfig
+	ipIndex     *IPIndex
 	stop        chan struct{}
 }
 
-func NewScheduler(store *TaskStore, outDir string, interval time.Duration, mmdb *geoip2.Reader, geocoder *ReverseGeocoder, tzClient *TimezoneClient, defaultSFTP *SFTPConfig) *Scheduler {
+func NewScheduler(store *TaskStore, outDir string, interval time.Duration, mmdb *geoip2.Reader, geocoder *ReverseGeocoder, tzClient *TimezoneClient, defaultSFTP *SFTPConfig, ipIndex *IPIndex) *Scheduler {
 	return &Scheduler{
 		store:       store,
 		outDir:      outDir,
@@ -41,6 +42,7 @@ func NewScheduler(store *TaskStore, outDir string, interval time.Duration, mmdb 
 		geocoder:    geocoder,
 		tzClient:    tzClient,
 		defaultSFTP: defaultSFTP,
+		ipIndex:     ipIndex,
 		stop:        make(chan struct{}),
 	}
 }
@@ -184,7 +186,7 @@ func (sc *Scheduler) generateForTask(task *Task, now time.Time) (string, error) 
 		for i := 0; i < task.Count; i++ {
 			t := time.Now()
 			ts := randomTimestamp(t.Add(-sc.interval), t)
-			req := generateRequestForTask(task, ts, nil, "")
+			req := generateRequestForTask(task, ts, nil, "", sc.ipIndex)
 			if geo != nil {
 				req.Device.Geo = sc.enrichGeo(geo, ts)
 			}
@@ -331,7 +333,7 @@ func (sc *Scheduler) generateForDeviceTask(task *Task, w *bufio.Writer, now time
 	for _, ifa := range slots {
 		t := time.Now()
 		ts := randomTimestamp(t.Add(-sc.interval), t)
-		req := generateRequestForTask(task, ts, nil, ifa)
+		req := generateRequestForTask(task, ts, nil, ifa, sc.ipIndex)
 		req.Device.Geo = sc.enrichGeo(currentGeo[ifa], ts)
 		offsetMins := 0
 		if req.Device.Geo != nil {

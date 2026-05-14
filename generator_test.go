@@ -132,7 +132,7 @@ func TestGenerateRequestForTask_IP(t *testing.T) {
 		IPAddress:     "10.0.0.1",
 	}
 	now := time.Now()
-	req := generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), nil, "")
+	req := generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), nil, "", nil)
 
 	if req.Device.IP != "10.0.0.1" {
 		t.Errorf("got IP %q, want %q", req.Device.IP, "10.0.0.1")
@@ -180,7 +180,7 @@ func TestGenerateRequestForTask_IFA_SameLocation(t *testing.T) {
 	const kmPerDegree = 111.0
 
 	for range 20 {
-		req := generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), baseGeo, "")
+		req := generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), baseGeo, "", nil)
 		geo := req.Device.Geo
 		dLat := (geo.Lat - baseGeo.Lat) * kmPerDegree
 		dLon := (geo.Lon - baseGeo.Lon) * kmPerDegree * math.Cos(baseGeo.Lat*math.Pi/180)
@@ -223,7 +223,7 @@ func TestIFA_ConsecutiveLocationsWithin2km(t *testing.T) {
 
 	reqs := make([]*BidRequest, count)
 	for i := range count {
-		reqs[i] = generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), baseGeo, "")
+		reqs[i] = generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), baseGeo, "", nil)
 	}
 
 	for i, req := range reqs {
@@ -253,7 +253,7 @@ func TestIFA_ConsistentBaseGeoAcrossSchedulerRuns(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
 	srv := NewServer(store, nil)
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil, nil)
 
 	now := time.Now()
 	task := &Task{
@@ -328,7 +328,7 @@ func TestGenerateRequestForTask_IFA(t *testing.T) {
 		IFA:          "ifa-abc-123",
 	}
 	now := time.Now()
-	req := generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), nil, "")
+	req := generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), nil, "", nil)
 
 	if req.Device.IFA != "ifa-abc-123" {
 		t.Errorf("got IFA %q, want %q", req.Device.IFA, "ifa-abc-123")
@@ -342,7 +342,7 @@ func TestGenerateRequestForTask_BBox(t *testing.T) {
 	}
 	now := time.Now()
 	for range 10 {
-		req := generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), nil, "")
+		req := generateRequestForTask(task, randomTimestamp(now.Add(-5*time.Minute), now), nil, "", nil)
 		geo := req.Device.Geo
 		if geo.Lat < 50.0 || geo.Lat > 51.0 {
 			t.Errorf("lat %f outside bbox", geo.Lat)
@@ -434,7 +434,7 @@ func TestGenerateImpression_Random(t *testing.T) {
 }
 
 func TestScheduler_StartStop(t *testing.T) {
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, nil, nil)
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, nil, nil, nil)
 	done := make(chan struct{})
 	go func() {
 		sc.Start()
@@ -450,7 +450,7 @@ func TestScheduler_StartStop(t *testing.T) {
 
 func TestScheduler_RunNoActiveTasks(t *testing.T) {
 	outDir := t.TempDir()
-	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil, nil, nil)
+	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil, nil, nil, nil)
 	sc.run(time.Now())
 	entries := readJSONLEntries(t, outDir)
 	if len(entries) != 0 {
@@ -462,7 +462,7 @@ func TestScheduler_GenerateForTask_OutDirError(t *testing.T) {
 	// Use a file as the output dir so MkdirAll fails.
 	blockingFile := t.TempDir() + "/file"
 	os.WriteFile(blockingFile, []byte("x"), 0644)
-	sc := NewScheduler(newTestStore(t), blockingFile, 5*time.Minute, nil, nil, nil, nil)
+	sc := NewScheduler(newTestStore(t), blockingFile, 5*time.Minute, nil, nil, nil, nil, nil)
 	_, err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
 	if err == nil {
 		t.Error("expected error when outDir cannot be created")
@@ -473,7 +473,7 @@ func TestScheduler_GenerateForTask_FileCreateError(t *testing.T) {
 	outDir := t.TempDir()
 	os.Chmod(outDir, 0444)
 	defer os.Chmod(outDir, 0755)
-	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil, nil, nil)
+	sc := NewScheduler(newTestStore(t), outDir, 5*time.Minute, nil, nil, nil, nil, nil)
 	_, err := sc.generateForTask(&Task{CorrelationID: randomID(), Count: 1, CriteriaType: CriteriaIP, IPAddress: "1.2.3.4"}, time.Now())
 	if err == nil {
 		t.Error("expected error when output file cannot be created")
@@ -483,7 +483,7 @@ func TestScheduler_GenerateForTask_FileCreateError(t *testing.T) {
 func TestScheduler_GenerateForTask(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil, nil)
 
 	now := time.Now()
 	task := &Task{
@@ -508,7 +508,7 @@ func TestScheduler_GenerateForTask(t *testing.T) {
 func TestScheduler_Run(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil, nil)
 
 	now := time.Now()
 	active := &Task{
@@ -610,7 +610,7 @@ func TestIP_InitialGeoFromMMDB(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
 	srv := NewServer(store, db)
-	sc := NewScheduler(store, outDir, 5*time.Minute, db, nil, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, db, nil, nil, nil, nil)
 
 	// Look up expected coordinates directly from the MMDB.
 	record, err := db.City(net.ParseIP("8.8.8.8"))
@@ -663,7 +663,7 @@ func TestIP_ConsecutiveLocationsWithin2km(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
 	srv := NewServer(store, nil)
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil, nil)
 
 	const count = 20
 	now := time.Now()
@@ -822,7 +822,7 @@ func TestUploadAndClean_SFTPFails_FilesKeptLocally(t *testing.T) {
 
 	// Port 1 will always refuse connections.
 	badSFTP := &SFTPConfig{Host: "127.0.0.1", Port: 1, User: "u", Password: "p"}
-	sc := NewScheduler(newTestStore(t), dir, 5*time.Minute, nil, nil, nil, nil)
+	sc := NewScheduler(newTestStore(t), dir, 5*time.Minute, nil, nil, nil, nil, nil)
 	sc.uploadAndClean(zipPath, []string{jsonlPath}, badSFTP)
 
 	if _, err := os.Stat(zipPath); err != nil {
@@ -838,7 +838,7 @@ func TestUploadAndClean_SFTPFails_FilesKeptLocally(t *testing.T) {
 func TestRun_NoSFTP_ZipKeptLocally(t *testing.T) {
 	store := newTestStore(t)
 	outDir := t.TempDir()
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil, nil)
 
 	now := time.Now()
 	store.Add(&Task{
@@ -878,7 +878,7 @@ func TestRun_SFTPGrouping(t *testing.T) {
 	outDir := t.TempDir()
 	badSFTP := &SFTPConfig{Host: "127.0.0.1", Port: 1, User: "u", Password: "p"}
 	// No global default — tasks will each carry their own SFTP or none.
-	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil)
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil, nil)
 
 	now := time.Now()
 	sftpA := &SFTPConfig{Host: "sftp-a.example.com", Port: 22, User: "u", Password: "p", Dir: "/"}
@@ -1005,14 +1005,14 @@ func TestTimezoneClient_UnreachableServer(t *testing.T) {
 // ---- enrichGeo tests ----
 
 func TestEnrichGeo_NilGeo(t *testing.T) {
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, nil, nil)
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, nil, nil, nil)
 	if got := sc.enrichGeo(nil, time.Now()); got != nil {
 		t.Errorf("expected nil for nil geo input, got %+v", got)
 	}
 }
 
 func TestEnrichGeo_NoTzClient(t *testing.T) {
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, nil, nil)
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, nil, nil, nil)
 	geo := &Geo{Lat: 51.5, Lon: -0.1}
 	got := sc.enrichGeo(geo, time.Now())
 	if got == nil {
@@ -1029,7 +1029,7 @@ func TestEnrichGeo_TzClientSetsUTCOffset(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil)
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil, nil)
 	geo := &Geo{Lat: 40.7, Lon: -74.0}
 	ts := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC) // January → EST (UTC-5)
 
@@ -1050,7 +1050,7 @@ func TestEnrichGeo_TzClientEmptyTz(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil)
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil, nil)
 	geo := &Geo{Lat: 40.7, Lon: -74.0}
 	got := sc.enrichGeo(geo, time.Now())
 	if got == nil {
@@ -1067,7 +1067,7 @@ func TestEnrichGeo_TzClientInvalidTz(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil)
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil, nil)
 	geo := &Geo{Lat: 40.7, Lon: -74.0}
 	got := sc.enrichGeo(geo, time.Now())
 	if got == nil {
@@ -1084,7 +1084,7 @@ func TestEnrichGeo_OriginalGeoUnmodified(t *testing.T) {
 	}))
 	defer srv.Close()
 
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil)
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil, nil)
 	original := &Geo{Lat: 40.7, Lon: -74.0, UTCOffset: 0}
 	got := sc.enrichGeo(original, time.Now())
 
@@ -1093,6 +1093,293 @@ func TestEnrichGeo_OriginalGeoUnmodified(t *testing.T) {
 	}
 	if original.UTCOffset != 0 {
 		t.Error("enrichGeo must not modify the original Geo")
+	}
+}
+
+// ---- IPIndex tests ----
+
+func TestIPIndex_NilReceiver(t *testing.T) {
+	var idx *IPIndex
+	ip := idx.RandomIP("US")
+	if ip == "" {
+		t.Error("nil IPIndex.RandomIP should return a non-empty fallback IP")
+	}
+	if net.ParseIP(ip) == nil {
+		t.Errorf("nil IPIndex.RandomIP returned invalid IP %q", ip)
+	}
+	if idx.CountryCount() != 0 {
+		t.Errorf("nil IPIndex.CountryCount should return 0, got %d", idx.CountryCount())
+	}
+}
+
+func TestBuildIPIndex_BadPath(t *testing.T) {
+	_, err := BuildIPIndex("/nonexistent/path/GeoLite2-City.mmdb")
+	if err == nil {
+		t.Error("expected error for non-existent MMDB path")
+	}
+}
+
+func TestGenerateForDeviceTask_BBoxReset(t *testing.T) {
+	store := newTestStore(t)
+	outDir := t.TempDir()
+	sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, nil, nil, nil)
+
+	now := time.Now()
+	// Tiny bbox (~11m × 11m) — every 1 km walk step will leave it, forcing a reset.
+	task := &Task{
+		CorrelationID: "bbox-reset",
+		StartTime:     now.Add(-time.Hour),
+		EndTime:       now.Add(time.Hour),
+		CriteriaType:  CriteriaBBox,
+		Count:         20,
+		Geometry: &GeoJSONGeometry{
+			Type: "Polygon",
+			Coordinates: [][][2]float64{{{
+				-0.0001, 51.5001}, {0.0001, 51.5001}, {0.0001, 51.5002}, {-0.0001, 51.5002}, {-0.0001, 51.5001,
+			}}},
+		},
+	}
+	store.Add(task)
+	sc.run(now)
+
+	entries := readJSONLEntries(t, outDir)
+	if len(entries) != 1 {
+		t.Fatalf("expected 1 output file, got %d", len(entries))
+	}
+}
+
+func TestScheduler_Run_GenerateError(t *testing.T) {
+	store := newTestStore(t)
+	// Use a regular file as outDir so MkdirAll inside generateForTask fails.
+	blockingFile := t.TempDir() + "/blocker"
+	os.WriteFile(blockingFile, []byte("x"), 0644)
+	sc := NewScheduler(store, blockingFile, 5*time.Minute, nil, nil, nil, nil, nil)
+
+	now := time.Now()
+	store.Add(&Task{
+		CorrelationID: "err-task",
+		StartTime:     now.Add(-time.Hour),
+		EndTime:       now.Add(time.Hour),
+		CriteriaType:  CriteriaIFA,
+		IFA:           "38400000-8cf0-11bd-b23e-10b96e40000d",
+		Count:         1,
+		LastGeo:       &Geo{Lat: 51.5, Lon: -0.1},
+	})
+	// run must not panic; the error is logged and the task skipped.
+	sc.run(now)
+}
+
+func TestGenerateRequestForTask_BBox_NilGeometry(t *testing.T) {
+	task := &Task{
+		CriteriaType: CriteriaBBox,
+		Geometry:     nil,
+	}
+	req := generateRequestForTask(task, time.Now(), nil, "", nil)
+	if req == nil {
+		t.Fatal("expected non-nil request even with nil geometry")
+	}
+}
+
+func TestGenerateRequestForTask_BBox_InvalidGeometry(t *testing.T) {
+	task := &Task{
+		CriteriaType: CriteriaBBox,
+		Geometry:     &GeoJSONGeometry{Type: "Point", Coordinates: nil},
+	}
+	req := generateRequestForTask(task, time.Now(), nil, "", nil)
+	if req == nil {
+		t.Fatal("expected non-nil request even with invalid geometry")
+	}
+}
+
+func TestRandomInt_EqualMinMax(t *testing.T) {
+	if got := randomInt(7, 7); got != 7 {
+		t.Errorf("randomInt(7,7): got %d, want 7", got)
+	}
+}
+
+func TestRandomInt_MaxLessThanMin(t *testing.T) {
+	if got := randomInt(5, 3); got != 5 {
+		t.Errorf("randomInt(5,3): got %d, want 5", got)
+	}
+}
+
+func TestRandomChoice_EmptySlice(t *testing.T) {
+	if got := randomChoice([]string{}); got != "" {
+		t.Errorf("randomChoice([]): got %q, want empty string", got)
+	}
+}
+
+func TestRandomChoiceInt_EmptySlice(t *testing.T) {
+	if got := randomChoiceInt([]int{}); got != 0 {
+		t.Errorf("randomChoiceInt([]): got %d, want 0", got)
+	}
+}
+
+func TestRandomIPInCIDR_IPv6Network(t *testing.T) {
+	_, network, _ := net.ParseCIDR("2001:db8::/32")
+	ip := randomIPInCIDR(network)
+	if ip != "" {
+		t.Errorf("expected empty string for IPv6 network, got %q", ip)
+	}
+}
+
+func TestRandomIPInCIDR_HostRoute(t *testing.T) {
+	_, network, _ := net.ParseCIDR("203.0.113.1/32") // single host
+	ip := randomIPInCIDR(network)
+	if net.ParseIP(ip) == nil {
+		t.Errorf("expected valid IP for /32 network, got %q", ip)
+	}
+}
+
+func TestIPIndex_UnknownCountry(t *testing.T) {
+	idx := &IPIndex{ranges: make(map[string][]*net.IPNet)}
+	ip := idx.RandomIP("XX") // unknown country
+	if net.ParseIP(ip) == nil {
+		t.Errorf("unknown country fallback returned invalid IP %q", ip)
+	}
+}
+
+func TestIPIndex_EmptyCountry(t *testing.T) {
+	idx := &IPIndex{ranges: make(map[string][]*net.IPNet)}
+	ip := idx.RandomIP("")
+	if net.ParseIP(ip) == nil {
+		t.Errorf("empty country fallback returned invalid IP %q", ip)
+	}
+}
+
+func TestRandomIPInCIDR_SmallRange(t *testing.T) {
+	_, network, _ := net.ParseCIDR("192.0.2.0/30") // 4 addresses, 2 usable hosts
+	for range 20 {
+		ip := randomIPInCIDR(network)
+		if ip == "" {
+			t.Error("expected non-empty IP from /30 range")
+			continue
+		}
+		parsed := net.ParseIP(ip)
+		if parsed == nil {
+			t.Errorf("invalid IP %q from /30 range", ip)
+			continue
+		}
+		if !network.Contains(parsed) {
+			t.Errorf("IP %q is outside network %s", ip, network)
+		}
+	}
+}
+
+func TestRandomIPInCIDR_LargeRange(t *testing.T) {
+	_, network, _ := net.ParseCIDR("10.0.0.0/8")
+	seen := make(map[string]bool)
+	for range 100 {
+		ip := randomIPInCIDR(network)
+		parsed := net.ParseIP(ip)
+		if parsed == nil {
+			t.Errorf("invalid IP %q", ip)
+			continue
+		}
+		if !network.Contains(parsed) {
+			t.Errorf("IP %q outside network %s", ip, network)
+		}
+		seen[ip] = true
+	}
+	if len(seen) < 50 {
+		t.Errorf("expected variety in 100 /8 draws, got only %d unique IPs", len(seen))
+	}
+}
+
+func TestBuildIPIndex_WithMMDB(t *testing.T) {
+	const mmdbPath = "data/GeoLite2-City.mmdb"
+	if _, err := os.Stat(mmdbPath); os.IsNotExist(err) {
+		t.Skip("GeoLite2-City.mmdb not found; skipping IPIndex integration test")
+	}
+
+	idx, err := BuildIPIndex(mmdbPath)
+	if err != nil {
+		t.Fatalf("BuildIPIndex: %v", err)
+	}
+	if idx.CountryCount() == 0 {
+		t.Fatal("expected at least one country in index")
+	}
+	t.Logf("indexed %d countries", idx.CountryCount())
+}
+
+func TestIPIndex_RandomIP_KnownCountry(t *testing.T) {
+	const mmdbPath = "data/GeoLite2-City.mmdb"
+	if _, err := os.Stat(mmdbPath); os.IsNotExist(err) {
+		t.Skip("GeoLite2-City.mmdb not found; skipping IPIndex integration test")
+	}
+
+	idx, err := BuildIPIndex(mmdbPath)
+	if err != nil {
+		t.Fatalf("BuildIPIndex: %v", err)
+	}
+
+	db := openTestMMDB(t)
+
+	// For each well-known country, verify returned IPs resolve back to the same country.
+	for _, country := range []string{"US", "DE", "GB", "FR", "JP"} {
+		if _, ok := idx.ranges[country]; !ok {
+			continue // country not in this build
+		}
+		matched := 0
+		for range 20 {
+			ip := idx.RandomIP(country)
+			parsed := net.ParseIP(ip)
+			if parsed == nil {
+				t.Errorf("%s: RandomIP returned invalid IP %q", country, ip)
+				continue
+			}
+			record, err := db.City(parsed)
+			if err != nil || record.Country.IsoCode == "" {
+				continue // IP not in DB (edge of CIDR range, etc.) — skip
+			}
+			if record.Country.IsoCode == country {
+				matched++
+			}
+		}
+		// Expect the majority of generated IPs to resolve to the correct country.
+		if matched < 10 {
+			t.Errorf("country %s: only %d/20 IPs resolved back correctly", country, matched)
+		}
+	}
+}
+
+func TestGenerateDevice_IPFromIndex(t *testing.T) {
+	const mmdbPath = "data/GeoLite2-City.mmdb"
+	if _, err := os.Stat(mmdbPath); os.IsNotExist(err) {
+		t.Skip("GeoLite2-City.mmdb not found; skipping IPIndex integration test")
+	}
+
+	idx, err := BuildIPIndex(mmdbPath)
+	if err != nil {
+		t.Fatalf("BuildIPIndex: %v", err)
+	}
+
+	config := DefaultConfig
+	config.IPIndex = idx
+
+	db := openTestMMDB(t)
+
+	matched := 0
+	for range 50 {
+		device := generateDevice(config)
+		if device.Geo == nil || device.Geo.Country == "" {
+			continue
+		}
+		parsed := net.ParseIP(device.IP)
+		if parsed == nil {
+			t.Errorf("generateDevice produced invalid IP %q", device.IP)
+			continue
+		}
+		record, err := db.City(parsed)
+		if err != nil || record.Country.IsoCode == "" {
+			continue
+		}
+		if record.Country.IsoCode == device.Geo.Country {
+			matched++
+		}
+	}
+	if matched < 20 {
+		t.Errorf("expected at least 20/50 devices to have IP matching geo country, got %d", matched)
 	}
 }
 
@@ -1307,7 +1594,7 @@ func TestExtTS_MatchesDeviceGeoTimezone(t *testing.T) {
 			store := newTestStore(t)
 			outDir := t.TempDir()
 			tzClient := NewTimezoneClient(tzSrv.URL)
-			sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, tzClient, nil)
+			sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, tzClient, nil, nil)
 
 			anchor := &Geo{Lat: 40.7128, Lon: -74.0060}
 			now := time.Now()
