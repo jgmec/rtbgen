@@ -15,6 +15,7 @@ services:
       - -scheduler-interval=${SCHEDULER_INTERVAL}
       - -mmdb=${MMDB_PATH}
       - -nominatim-url=${NOMINATIM_URL}
+      - -nominatim-delay=${NOMINATIM_DELAY}
       - -tls-cert=/app/certs/server.crt
       - -tls-key=/app/certs/server.key
       - -sftp-host=${SFTP_HOST}
