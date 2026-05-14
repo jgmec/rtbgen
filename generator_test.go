@@ -5,8 +5,6 @@ import (
 	"encoding/json"
 	"math"
 	"net"
-	"net/http"
-	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -925,6 +923,15 @@ func TestRun_SFTPGrouping(t *testing.T) {
 
 // ---- TimezoneClient tests ----
 
+func newTestTZClient(t *testing.T) *TimezoneClient {
+	t.Helper()
+	c, err := NewTimezoneClient()
+	if err != nil {
+		t.Fatalf("NewTimezoneClient: %v", err)
+	}
+	return c
+}
+
 func TestTimezoneClient_NilReceiver(t *testing.T) {
 	var c *TimezoneClient
 	if got := c.Timezone(0, 0); got != "" {
@@ -932,73 +939,47 @@ func TestTimezoneClient_NilReceiver(t *testing.T) {
 	}
 }
 
-func TestTimezoneClient_SuccessAndCache(t *testing.T) {
-	calls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		json.NewEncoder(w).Encode(map[string]string{"timezone": "America/New_York"})
-	}))
-	defer srv.Close()
+func TestTimezoneClient_KnownLocations(t *testing.T) {
+	c := newTestTZClient(t)
+	cases := []struct {
+		lat, lon float64
+		want     string
+	}{
+		{40.7128, -74.0060, "America/New_York"}, // New York City
+		{51.5074, -0.1278, "Europe/London"},      // London
+		{35.6762, 139.6503, "Asia/Tokyo"},        // Tokyo
+	}
+	for _, tc := range cases {
+		got := c.Timezone(tc.lat, tc.lon)
+		if got != tc.want {
+			t.Errorf("Timezone(%.4f, %.4f) = %q, want %q", tc.lat, tc.lon, got, tc.want)
+		}
+	}
+}
 
-	c := NewTimezoneClient(srv.URL)
+func TestTimezoneClient_Cache(t *testing.T) {
+	c := newTestTZClient(t)
+	// Populate cache.
 	tz1 := c.Timezone(40.71, -74.01)
-	tz2 := c.Timezone(40.71, -74.01) // same rounded coords → cache hit
-
-	if tz1 != "America/New_York" {
-		t.Errorf("expected America/New_York, got %q", tz1)
+	if tz1 == "" {
+		t.Fatal("expected non-empty timezone for NYC")
 	}
-	if tz2 != tz1 {
-		t.Errorf("expected cached result %q, got %q", tz1, tz2)
-	}
-	if calls != 1 {
-		t.Errorf("expected 1 HTTP call (second should hit cache), got %d", calls)
+	// Second call with same rounded coords must return identical result from cache.
+	tz2 := c.Timezone(40.71, -74.01)
+	if tz1 != tz2 {
+		t.Errorf("cache returned different value: %q vs %q", tz1, tz2)
 	}
 }
 
-func TestTimezoneClient_DifferentCoordsNoCacheHit(t *testing.T) {
-	calls := 0
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		calls++
-		json.NewEncoder(w).Encode(map[string]string{"timezone": "Europe/London"})
-	}))
-	defer srv.Close()
-
-	c := NewTimezoneClient(srv.URL)
-	c.Timezone(51.50, -0.10)
-	c.Timezone(51.60, -0.20) // different rounded coords → new request
-	if calls != 2 {
-		t.Errorf("expected 2 HTTP calls for different coords, got %d", calls)
+func TestTimezoneClient_DifferentCoordsDifferentZones(t *testing.T) {
+	c := newTestTZClient(t)
+	nyc := c.Timezone(40.71, -74.01)
+	tokyo := c.Timezone(35.68, 139.65)
+	if nyc == "" || tokyo == "" {
+		t.Fatal("expected non-empty timezone names")
 	}
-}
-
-func TestTimezoneClient_ServerError(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	c := NewTimezoneClient(srv.URL)
-	if got := c.Timezone(40.71, -74.01); got != "" {
-		t.Errorf("expected empty string on server error, got %q", got)
-	}
-}
-
-func TestTimezoneClient_InvalidJSON(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		w.Write([]byte("not json"))
-	}))
-	defer srv.Close()
-
-	c := NewTimezoneClient(srv.URL)
-	if got := c.Timezone(40.71, -74.01); got != "" {
-		t.Errorf("expected empty string on invalid JSON, got %q", got)
-	}
-}
-
-func TestTimezoneClient_UnreachableServer(t *testing.T) {
-	c := NewTimezoneClient("http://127.0.0.1:1")
-	if got := c.Timezone(40.71, -74.01); got != "" {
-		t.Errorf("expected empty string for unreachable server, got %q", got)
+	if nyc == tokyo {
+		t.Errorf("NYC and Tokyo should have different timezones, both got %q", nyc)
 	}
 }
 
@@ -1024,13 +1005,8 @@ func TestEnrichGeo_NoTzClient(t *testing.T) {
 }
 
 func TestEnrichGeo_TzClientSetsUTCOffset(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"timezone": "America/New_York"})
-	}))
-	defer srv.Close()
-
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil, nil)
-	geo := &Geo{Lat: 40.7, Lon: -74.0}
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, newTestTZClient(t), nil, nil)
+	geo := &Geo{Lat: 40.7128, Lon: -74.0060}
 	ts := time.Date(2024, 1, 15, 12, 0, 0, 0, time.UTC) // January → EST (UTC-5)
 
 	got := sc.enrichGeo(geo, ts)
@@ -1044,48 +1020,9 @@ func TestEnrichGeo_TzClientSetsUTCOffset(t *testing.T) {
 	}
 }
 
-func TestEnrichGeo_TzClientEmptyTz(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"timezone": ""})
-	}))
-	defer srv.Close()
-
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil, nil)
-	geo := &Geo{Lat: 40.7, Lon: -74.0}
-	got := sc.enrichGeo(geo, time.Now())
-	if got == nil {
-		t.Fatal("expected non-nil geo")
-	}
-	if got.UTCOffset != 0 {
-		t.Errorf("expected UTCOffset=0 for empty timezone, got %d", got.UTCOffset)
-	}
-}
-
-func TestEnrichGeo_TzClientInvalidTz(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"timezone": "INVALID_TIMEZONE"})
-	}))
-	defer srv.Close()
-
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil, nil)
-	geo := &Geo{Lat: 40.7, Lon: -74.0}
-	got := sc.enrichGeo(geo, time.Now())
-	if got == nil {
-		t.Fatal("expected non-nil geo")
-	}
-	if got.UTCOffset != 0 {
-		t.Errorf("expected UTCOffset=0 for invalid timezone name, got %d", got.UTCOffset)
-	}
-}
-
 func TestEnrichGeo_OriginalGeoUnmodified(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"timezone": "America/New_York"})
-	}))
-	defer srv.Close()
-
-	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, NewTimezoneClient(srv.URL), nil, nil)
-	original := &Geo{Lat: 40.7, Lon: -74.0, UTCOffset: 0}
+	sc := NewScheduler(newTestStore(t), t.TempDir(), 5*time.Minute, nil, nil, newTestTZClient(t), nil, nil)
+	original := &Geo{Lat: 40.7128, Lon: -74.0060, UTCOffset: 0}
 	got := sc.enrichGeo(original, time.Now())
 
 	if got == original {
@@ -1581,20 +1518,13 @@ func TestCLIMode_NonType2GeoNotEnriched(t *testing.T) {
 }
 
 func TestExtTS_MatchesDeviceGeoTimezone(t *testing.T) {
-	// tzf-server mock: New York → UTC-5 in January (EST)
-	tzSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		json.NewEncoder(w).Encode(map[string]string{"timezone": "America/New_York"})
-	}))
-	defer tzSrv.Close()
-
 	loc, _ := time.LoadLocation("America/New_York")
 
 	for _, criteriaType := range []CriteriaType{CriteriaIFA, CriteriaIP} {
 		t.Run(string(criteriaType), func(t *testing.T) {
 			store := newTestStore(t)
 			outDir := t.TempDir()
-			tzClient := NewTimezoneClient(tzSrv.URL)
-			sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, tzClient, nil, nil)
+			sc := NewScheduler(store, outDir, 5*time.Minute, nil, nil, newTestTZClient(t), nil, nil)
 
 			anchor := &Geo{Lat: 40.7128, Lon: -74.0060}
 			now := time.Now()

@@ -10,7 +10,7 @@ info:
 
 servers:
   - url: https://localhost:8081
-    description: Default Docker TLS endpoint
+    description: Default Docker Compose TLS endpoint
   - url: http://localhost:8080
     description: Plain HTTP (no TLS)
 
@@ -34,6 +34,11 @@ paths:
         CIDR range matching `device.geo.country`, making the IP geographically
         consistent with the location. For `ip`-criteria tasks the device IP is always
         pinned to `ip_address` regardless of the index.
+
+        When started with `-tz`, the scheduler resolves the IANA timezone for each
+        device's coordinates using embedded tzf boundary data and sets
+        `device.geo.utcoffset` (minutes from UTC, DST-aware). The same timezone is
+        used to format `ext.ts` with the correct local offset.
       requestBody:
         required: true
         content:
@@ -236,7 +241,8 @@ components:
         scheduler tick, city, country, region, and zip are overwritten by Nominatim
         reverse geocoding of the walked coordinates (if `-nominatim-url` is
         configured). The device `ip` field is drawn from a CIDR range matching
-        `country` when the MMDB IP index is available.
+        `country` when the MMDB IP index is available. `utcoffset` is set when
+        the server is started with `-tz`.
       properties:
         lat:
           type: number
@@ -267,7 +273,7 @@ components:
           type: integer
           description: >
             Device local UTC offset in minutes (DST-aware). Set only when
-            `-tzf-url` is configured.
+            the server is started with `-tz` (uses embedded tzf boundary data).
 
     SFTPConfig:
       type: object

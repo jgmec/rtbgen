@@ -17,7 +17,7 @@ A Go CLI tool and HTTP service for generating random [OpenRTB 2.5](https://www.i
 - Per-device geo pools for `ip` and `bbox` tasks — each device walks independently across ticks
 - Single walking location for `ifa` tasks — path persisted across ticks and server restarts
 - Reverse geocoding via Nominatim — enriches all generated geo points with city, country, region, and postcode; overwrites MaxMind address fields in scheduler output
-- Timezone-aware timestamps — `ext.ts` is an ISO 8601 string with the device's local UTC offset (millisecond precision), resolved via tzf-server
+- Timezone-aware timestamps — `ext.ts` is an ISO 8601 string with the device's local UTC offset (millisecond precision); timezone is resolved from embedded [tzf](https://github.com/ringsaturn/tzf) boundary data (no external service required)
 - HTTPS support with TLS certificates
 - SFTP upload of tick output — per-task or global default; local files deleted after successful upload
 - Docker and Docker Compose support
@@ -69,7 +69,7 @@ Requires Go 1.23+.
 ./rtb-generator -count=20 -scheduler-interval=10m
 ```
 
-Each generated request includes an `ext.ts` field — an ISO 8601 timestamp with `+00:00` offset (CLI has no tzf-server, so UTC is used), randomized within `[now - scheduler-interval, now]`. Example: `"2026-04-15T10:23:41.782+00:00"`.
+Each generated request includes an `ext.ts` field — an ISO 8601 timestamp with `+00:00` offset (CLI mode does not run the scheduler, so UTC is used), randomized within `[now - scheduler-interval, now]`. Example: `"2026-04-15T10:23:41.782+00:00"`.
 
 ### CLI vs HTTP service
 
@@ -103,7 +103,7 @@ Start the server:
 | `-scheduler-interval` | `5m` | How often active tasks generate requests |
 | `-mmdb` | | Path to MaxMind GeoIP2 City MMDB file (optional) |
 | `-nominatim-url` | `https://nominatim.openstreetmap.org` | Base URL for Nominatim reverse geocoding (optional) |
-| `-tzf-url` | | Base URL for tzf-server timezone lookups (optional) |
+| `-tz` | `true` | Enable timezone enrichment — sets `device.geo.utcoffset` and formats `ext.ts` with the local UTC offset using embedded tzf boundary data; pass `-tz=false` to disable |
 | `-tls-cert` | | Path to TLS certificate file — enables HTTPS when set together with `-tls-key` |
 | `-tls-key` | | Path to TLS private key file — enables HTTPS when set together with `-tls-cert` |
 | `-sftp-host` | | Default SFTP server hostname — enables upload when set |
@@ -133,15 +133,13 @@ To use a self-hosted Nominatim instance, set `-nominatim-url` to its base URL.
 
 ### Timezone-aware timestamps
 
-When `-tzf-url` is set, the scheduler resolves the IANA timezone name for each device's geo coordinates using a [tzf-server](https://github.com/ringsaturn/tzf-server) instance and sets `device.geo.utcoffset` (minutes from UTC, DST-aware) on every generated request.
+When `-tz` is set, the scheduler resolves the IANA timezone name for each device's geo coordinates using the [tzf](https://github.com/ringsaturn/tzf) library (embedded boundary data, no external service) and sets `device.geo.utcoffset` (minutes from UTC, DST-aware) on every generated request.
 
 The same resolved timezone is used to format `ext.ts` as a local-time ISO 8601 string, so the timestamp offset matches the device location. For example, a device in New York in winter produces `"2026-01-15T07:30:45.123-05:00"`.
 
 Timezone results are cached by rounded coordinates (~1 km grid) to avoid redundant lookups.
 
-If `-tzf-url` is not configured, `device.geo.utcoffset` is omitted and `ext.ts` is formatted in UTC (`+00:00`).
-
-The Docker Compose setup includes a `tzf-server` service. Set `TZF_URL=http://tzf-server:8080` in `.env` to enable it.
+If `-tz` is not set, `device.geo.utcoffset` is omitted and `ext.ts` is formatted in UTC (`+00:00`).
 
 ### TLS / HTTPS
 
@@ -402,7 +400,7 @@ Each request includes an `ext` object:
 }
 ```
 
-`ts` is an ISO 8601 timestamp with millisecond precision, randomized within `[now - scheduler-interval, now]`. The UTC offset reflects the device's local timezone at the event time (requires `-tzf-url`); otherwise `+00:00` is used.
+`ts` is an ISO 8601 timestamp with millisecond precision, randomized within `[now - scheduler-interval, now]`. The UTC offset reflects the device's local timezone at the event time (requires `-tz`); otherwise `+00:00` is used.
 
 ### Location walking
 
@@ -495,8 +493,6 @@ OUT_DIR=/app/data/output
 SCHEDULER_INTERVAL=5m
 MMDB_PATH=/app/data/GeoLite2-City.mmdb
 NOMINATIM_URL=https://nominatim.openstreetmap.org
-TZF_PORT=8082
-TZF_URL=http://tzf-server:8080
 TLS_CERT_PATH=./certs/server.crt
 TLS_KEY_PATH=./certs/server.key
 SFTP_HOST=
@@ -518,7 +514,7 @@ Before starting for the first time, generate a self-signed certificate:
 
 The `./certs/` directory is bind-mounted into the container as read-only. The `./data/` directory is mounted at `/app/data` and holds tasks, output JSONL files, and optionally the MMDB file.
 
-If `MMDB_PATH` is empty, MMDB lookup is disabled and IP tasks fall back to a random city. If `TLS_CERT_PATH` or `TLS_KEY_PATH` are empty, the server runs over plain HTTP.
+Timezone enrichment is enabled by default (`-tz=true`); pass `-tz=false` to disable it. If `MMDB_PATH` is empty, MMDB lookup is disabled and IP tasks fall back to a random city. If `TLS_CERT_PATH` or `TLS_KEY_PATH` are empty, the server runs over plain HTTP.
 
 ## Running tests
 

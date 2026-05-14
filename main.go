@@ -26,7 +26,7 @@ func main() {
 	schedulerInterval := flag.Duration("scheduler-interval", 5*time.Minute, "How often the scheduler generates requests for active tasks (server mode only)")
 	mmdbPath := flag.String("mmdb", "", "Path to MaxMind GeoIP2 City MMDB file (optional)")
 	nominatimURL := flag.String("nominatim-url", "https://nominatim.openstreetmap.org", "Base URL for Nominatim reverse geocoding (optional)")
-	tzfURL := flag.String("tzf-url", "", "Base URL for tzf-server timezone lookups (optional)")
+	enableTZ := flag.Bool("tz", true, "Enable timezone enrichment using embedded tzf data (sets device.geo.utcoffset)")
 	tlsCert := flag.String("tls-cert", "", "Path to TLS certificate file (enables HTTPS)")
 	tlsKey := flag.String("tls-key", "", "Path to TLS private key file (enables HTTPS)")
 	sftpHost := flag.String("sftp-host", "", "Default SFTP server hostname")
@@ -58,7 +58,7 @@ func main() {
 				Dir:      *sftpDir,
 			}
 		}
-		runServer(*port, *tasksFile, *outDir, *schedulerInterval, *mmdbPath, *nominatimURL, *tzfURL, *tlsCert, *tlsKey, defaultSFTP)
+		runServer(*port, *tasksFile, *outDir, *schedulerInterval, *mmdbPath, *nominatimURL, *enableTZ, *tlsCert, *tlsKey, defaultSFTP)
 		return
 	}
 
@@ -117,7 +117,7 @@ func main() {
 	}
 }
 
-func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, mmdbPath, nominatimURL, tzfURL, tlsCert, tlsKey string, defaultSFTP *SFTPConfig) {
+func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, mmdbPath, nominatimURL string, enableTZ bool, tlsCert, tlsKey string, defaultSFTP *SFTPConfig) {
 	store, err := NewTaskStore(tasksFile)
 	if err != nil {
 		log.Fatalf("load task store: %v", err)
@@ -149,9 +149,13 @@ func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, 
 	}
 
 	var tzClient *TimezoneClient
-	if tzfURL != "" {
-		tzClient = NewTimezoneClient(tzfURL)
-		log.Printf("timezone lookup enabled: %s", tzfURL)
+	if enableTZ {
+		var tzErr error
+		tzClient, tzErr = NewTimezoneClient()
+		if tzErr != nil {
+			log.Fatalf("init timezone finder: %v", tzErr)
+		}
+		log.Printf("timezone enrichment enabled")
 	}
 
 	scheduler := NewScheduler(store, outDir, schedulerInterval, mmdb, geocoder, tzClient, defaultSFTP, ipIndex)
