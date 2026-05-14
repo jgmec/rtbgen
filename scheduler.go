@@ -10,6 +10,7 @@ import (
 	"math/rand"
 	"os"
 	"path/filepath"
+	"sync"
 	"time"
 
 	"github.com/google/uuid"
@@ -31,6 +32,7 @@ type Scheduler struct {
 	defaultSFTP *SFTPConfig
 	ipIndex     *IPIndex
 	stop        chan struct{}
+	done        chan struct{}
 }
 
 func NewScheduler(store *TaskStore, outDir string, interval time.Duration, mmdb *geoip2.Reader, geocoder *ReverseGeocoder, tzClient *TimezoneClient, defaultSFTP *SFTPConfig, ipIndex *IPIndex) *Scheduler {
@@ -44,6 +46,7 @@ func NewScheduler(store *TaskStore, outDir string, interval time.Duration, mmdb 
 		defaultSFTP: defaultSFTP,
 		ipIndex:     ipIndex,
 		stop:        make(chan struct{}),
+		done:        make(chan struct{}),
 	}
 }
 
@@ -70,6 +73,7 @@ func (sc *Scheduler) enrichGeo(geo *Geo, t time.Time) *Geo {
 
 // Start runs the scheduler loop. Call in a goroutine.
 func (sc *Scheduler) Start() {
+	defer close(sc.done)
 	ticker := time.NewTicker(sc.interval)
 	defer ticker.Stop()
 	log.Printf("scheduler started: interval=%s out_dir=%s", sc.interval, sc.outDir)
@@ -84,8 +88,10 @@ func (sc *Scheduler) Start() {
 	}
 }
 
+// Stop signals the scheduler to stop and waits for the current tick to finish.
 func (sc *Scheduler) Stop() {
 	close(sc.stop)
+	<-sc.done
 }
 
 func (sc *Scheduler) run(now time.Time) {
@@ -95,39 +101,55 @@ func (sc *Scheduler) run(now time.Time) {
 	}
 	log.Printf("scheduler tick: %d active task(s)", len(tasks))
 
-	// Generate JSONL files and group them by their effective SFTP target.
-	// Tasks that share the same SFTP config are bundled into one zip.
-	// Tasks with no SFTP config (and no global default) are bundled into a
-	// local-only zip that is kept on disk.
+	// Run each task concurrently. Results are collected via a buffered channel.
+	type taskResult struct {
+		filename string
+		cfg      *SFTPConfig // nil = no upload, keep locally
+	}
+	results := make(chan taskResult, len(tasks))
+
+	var wg sync.WaitGroup
+	for _, task := range tasks {
+		wg.Add(1)
+		go func(task *Task) {
+			defer wg.Done()
+			filename, err := sc.generateForTask(task, now)
+			if err != nil {
+				log.Printf("task %s: generation error: %v", task.CorrelationID, err)
+				return
+			}
+			cfg := task.SFTP
+			if cfg == nil {
+				cfg = sc.defaultSFTP
+			}
+			if cfg != nil && cfg.Host == "" {
+				cfg = nil
+			}
+			results <- taskResult{filename: filename, cfg: cfg}
+		}(task)
+	}
+	go func() {
+		wg.Wait()
+		close(results)
+	}()
+
+	// Collect results and group by SFTP target.
+	// Tasks sharing the same SFTP config are bundled into one zip.
+	// Tasks with no SFTP config produce a local-only zip.
 	type sftpGroup struct {
-		cfg   *SFTPConfig // nil = no upload, keep locally
+		cfg   *SFTPConfig
 		files []string
 	}
 	groups := make(map[string]*sftpGroup)
-
-	for _, task := range tasks {
-		filename, err := sc.generateForTask(task, now)
-		if err != nil {
-			log.Printf("task %s: generation error: %v", task.CorrelationID, err)
-			continue
-		}
-
-		cfg := task.SFTP
-		if cfg == nil {
-			cfg = sc.defaultSFTP
-		}
-
+	for r := range results {
 		key := "local"
-		if cfg != nil && cfg.Host != "" {
-			key = sftpKey(cfg)
-		} else {
-			cfg = nil
+		if r.cfg != nil {
+			key = sftpKey(r.cfg)
 		}
-
 		if groups[key] == nil {
-			groups[key] = &sftpGroup{cfg: cfg}
+			groups[key] = &sftpGroup{cfg: r.cfg}
 		}
-		groups[key].files = append(groups[key].files, filename)
+		groups[key].files = append(groups[key].files, r.filename)
 	}
 
 	// Create one zip per group and upload where configured.

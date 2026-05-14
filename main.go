@@ -1,14 +1,18 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
+	"os/signal"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 	"time"
 
 	"github.com/oschwald/geoip2-golang"
@@ -161,17 +165,44 @@ func runServer(port, tasksFile, outDir string, schedulerInterval time.Duration, 
 	scheduler := NewScheduler(store, outDir, schedulerInterval, mmdb, geocoder, tzClient, defaultSFTP, ipIndex)
 	go scheduler.Start()
 
-	srv := NewServer(store, mmdb)
+	apiSrv := NewServer(store, mmdb)
 	addr := ":" + port
-	handler := srv.Handler()
+	httpSrv := &http.Server{Addr: addr, Handler: apiSrv.Handler()}
+
+	// Graceful shutdown on SIGINT or SIGTERM.
+	sigCh := make(chan os.Signal, 1)
+	signal.Notify(sigCh, syscall.SIGINT, syscall.SIGTERM)
+	go func() {
+		sig := <-sigCh
+		log.Printf("received signal %s, shutting down", sig)
+
+		var wg sync.WaitGroup
+		wg.Add(2)
+		go func() {
+			defer wg.Done()
+			scheduler.Stop()
+			log.Println("scheduler drained")
+		}()
+		go func() {
+			defer wg.Done()
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+			if err := httpSrv.Shutdown(ctx); err != nil {
+				log.Printf("http shutdown: %v", err)
+			}
+		}()
+		wg.Wait()
+		log.Println("shutdown complete")
+	}()
+
 	if tlsCert != "" && tlsKey != "" {
 		log.Printf("HTTPS server listening on %s", addr)
-		if err := http.ListenAndServeTLS(addr, tlsCert, tlsKey, handler); err != nil {
+		if err := httpSrv.ListenAndServeTLS(tlsCert, tlsKey); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server: %v", err)
 		}
 	} else {
 		log.Printf("HTTP server listening on %s", addr)
-		if err := http.ListenAndServe(addr, handler); err != nil {
+		if err := httpSrv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			log.Fatalf("server: %v", err)
 		}
 	}
