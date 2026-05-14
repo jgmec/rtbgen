@@ -43,7 +43,8 @@ type ReverseGeocoder struct {
 	baseURL  string
 	client   *http.Client
 	cache    map[string]*geoMeta
-	mu       sync.Mutex
+	cacheMu  sync.RWMutex // guards cache reads and writes
+	rateMu   sync.Mutex   // held across sleep + HTTP call; enforces 1 req/s
 	lastCall time.Time
 }
 
@@ -83,26 +84,37 @@ func (g *ReverseGeocoder) Enrich(geo *Geo) *Geo {
 
 	key := fmt.Sprintf("%.2f,%.2f", geo.Lat, geo.Lon)
 
-	g.mu.Lock()
+	// Fast path: concurrent cache reads.
+	g.cacheMu.RLock()
 	if meta, ok := g.cache[key]; ok {
-		g.mu.Unlock()
+		g.cacheMu.RUnlock()
 		return applyMeta(geo, meta)
 	}
+	g.cacheMu.RUnlock()
 
-	// Rate-limit: ensure at least 1 second between requests.
+	// Slow path: one goroutine at a time through the rate limiter.
+	// Holding rateMu across the sleep and the HTTP call ensures at most one
+	// in-flight Nominatim request at any moment.
+	g.rateMu.Lock()
+	// Double-check: the previous holder may have fetched this key.
+	g.cacheMu.RLock()
+	if meta, ok := g.cache[key]; ok {
+		g.cacheMu.RUnlock()
+		g.rateMu.Unlock()
+		return applyMeta(geo, meta)
+	}
+	g.cacheMu.RUnlock()
+
 	if wait := time.Second - time.Since(g.lastCall); wait > 0 {
-		g.mu.Unlock()
 		time.Sleep(wait)
-		g.mu.Lock()
 	}
 	g.lastCall = time.Now()
-	g.mu.Unlock()
-
 	meta := g.lookup(geo.Lat, geo.Lon)
+	g.rateMu.Unlock()
 
-	g.mu.Lock()
+	g.cacheMu.Lock()
 	g.cache[key] = meta
-	g.mu.Unlock()
+	g.cacheMu.Unlock()
 
 	return applyMeta(geo, meta)
 }

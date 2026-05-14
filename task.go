@@ -118,6 +118,17 @@ func (s *TaskStore) Add(task *Task) error {
 	return s.save()
 }
 
+// Mutate runs fn (which should modify task's fields) and persists the store,
+// all under the write lock. This prevents save() from reading task fields via
+// another goroutine's Add call while the fields are being mutated.
+func (s *TaskStore) Mutate(task *Task, fn func()) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	fn()
+	s.tasks[task.CorrelationID] = task
+	return s.save()
+}
+
 func (s *TaskStore) Get(id string) (*Task, bool) {
 	s.mu.RLock()
 	defer s.mu.RUnlock()

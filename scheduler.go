@@ -232,8 +232,7 @@ func (sc *Scheduler) generateForTask(task *Task, now time.Time) (string, error) 
 
 		// Persist the final position for the next tick.
 		if geo != nil {
-			task.LastGeo = geo
-			sc.store.Add(task)
+			sc.store.Mutate(task, func() { task.LastGeo = geo })
 		}
 	}
 
@@ -378,10 +377,11 @@ func (sc *Scheduler) generateForDeviceTask(task *Task, w *bufio.Writer, now time
 	}
 
 	// Persist updated device locations.
-	for ifa, geo := range currentGeo {
-		task.Devices[ifa] = geo
-	}
-	sc.store.Add(task)
+	sc.store.Mutate(task, func() {
+		for ifa, geo := range currentGeo {
+			task.Devices[ifa] = geo
+		}
+	})
 	return nil
 }
 
